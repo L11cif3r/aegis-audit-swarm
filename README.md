@@ -1,4 +1,4 @@
-# 🛡️ Talamanda Audit Swarm
+# 🛡️ Talamanda Audit Swarm 
 
 **AI Control Plane & Security Gateway**
 A real-time monitoring dashboard and intelligent routing engine for multi-agent AI systems. Upgraded in **Phase 3** to include live cloud-database telemetry and active multi-provider LLM routing.
