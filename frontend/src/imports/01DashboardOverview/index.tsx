@@ -1,92 +1,119 @@
 import { useState, useEffect } from 'react';
-import { Activity, Bot, DollarSign, Shield } from 'lucide-react';
+import { Activity, Bot, DollarSign, ShieldAlert } from 'lucide-react';
+import { motion } from 'motion/react';
+import {
+  AreaChart, Area, ResponsiveContainer, Tooltip, XAxis,
+} from 'recharts';
+import { api } from '../../lib/api';
+import { PageHeader, Stat, Panel, SectionTitle, Badge, EmptyState } from '../../app/components/shell/primitives';
+import Reveal from '../../app/components/shell/Reveal';
 
-function MobileMetricCard({ label, value, icon: Icon, color }: { label: string, value: string | number, icon: any, color: string }) {
-  return (
-    <div className="bg-[#0d1420] border border-[#1e2d45] rounded-xl p-3 flex flex-col gap-2 relative overflow-hidden w-full">
-      <div className="flex justify-between items-start">
-        <span className="text-[10px] text-[#64748b] font-bold uppercase tracking-wider">{label}</span>
-        <Icon size={14} color={color} />
-      </div>
-      <span className="text-2xl font-bold text-[#e2e8f0] font-mono leading-none">{value}</span>
-    </div>
-  );
+function statusTone(status: string) {
+  if (status === 'success') return 'ok';
+  if (status === 'held') return 'warn';
+  return 'bad';
 }
 
 export default function Component01DashboardOverview() {
   const [logs, setLogs] = useState<any[]>([]);
-  const [isLive, setIsLive] = useState(false);
 
-  // Fetch live data from the FastAPI Backend
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/audit/logs');
-        if (res.ok) {
-          const data = await res.json();
-          setLogs(data);
-          setIsLive(true);
-        }
-      } catch (err) {
-        setIsLive(false);
+        setLogs(await api.logs());
+      } catch {
+        /* offline */
       }
     };
-
     fetchLogs();
     const interval = setInterval(fetchLogs, 2000);
     return () => clearInterval(interval);
   }, []);
 
   const totalRequests = logs.length;
-  const blockedRequests = logs.filter(l => l.status === 'blocked').length;
-  const totalCost = logs.reduce((acc, log) => acc + (parseFloat(log.cost.replace('$', '')) || 0), 0).toFixed(4);
-  const activeAgents = totalRequests > 0 ? [...new Set(logs.map(l => l.agent))].length : 0;
+  const blockedRequests = logs.filter((l) => l.status === 'blocked' || l.status === 'held').length;
+  const totalCost = logs.reduce((acc, log) => acc + (parseFloat((log.cost || '$0').replace('$', '')) || 0), 0).toFixed(4);
+  const activeAgents = totalRequests > 0 ? [...new Set(logs.map((l) => l.agent))].length : 0;
+
+  // Build a small cost sparkline from the chronological logs.
+  const series = [...logs]
+    .reverse()
+    .reduce<{ i: number; cost: number }[]>((acc, log) => {
+      const prev = acc.length ? acc[acc.length - 1].cost : 0;
+      acc.push({ i: acc.length, cost: +(prev + (parseFloat((log.cost || '$0').replace('$', '')) || 0)).toFixed(6) });
+      return acc;
+    }, []);
 
   return (
-    <div className="p-4 flex flex-col gap-5 w-full max-w-md mx-auto">
-      
-      {/* Gateway Status */}
-      <div className="flex items-center justify-between bg-[#0d1420] p-3 rounded-lg border border-[#1e2d45]">
-        <div className="flex flex-col">
-          <span className="text-xs text-[#64748b] font-medium">Gateway Status</span>
-          <span className="text-sm font-bold text-white">
-            {isLive ? 'Connected to Swarm' : 'Waiting for Backend...'}
-          </span>
-        </div>
-        <div className={`size-3 rounded-full ${isLive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        kicker="Control Plane"
+        title="Every agent action, refereed in real time."
+        subtitle="Live interception, security screening, and cost telemetry across your AI swarm."
+      />
 
-      {/* KPI Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <MobileMetricCard label="Total Handled" value={totalRequests} icon={Activity} color="#3b82f6" />
-        <MobileMetricCard label="Live Token Cost" value={`$${totalCost}`} icon={DollarSign} color="#10b981" />
-        <MobileMetricCard label="Threats Blocked" value={blockedRequests} icon={Shield} color="#ef4444" />
-        <MobileMetricCard label="Active Agents" value={activeAgents} icon={Bot} color="#8b5cf6" />
-      </div>
-
-      {/* Live Interception Stream */}
-      <div className="bg-[#0d1420] border border-[#1e2d45] rounded-xl p-4 flex flex-col gap-3">
-        <h2 className="text-xs font-bold text-[#e2e8f0] tracking-wide">Live Interception Stream</h2>
-        <div className="flex flex-col gap-2">
-          {logs.length === 0 ? (
-            <p className="text-xs text-[#64748b] italic text-center">No traffic detected.</p>
-          ) : (
-            logs.slice(0, 5).map((log, i) => (
-              <div key={i} className="bg-[#080c14] border border-[#1e2d45]/50 rounded-lg p-3 flex flex-col gap-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-[11px] font-bold text-white">{log.agent}</span>
-                  <span className={`text-[9px] font-black px-2 py-0.5 rounded ${
-                    log.status === 'success' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
-                  }`}>
-                    {log.status.toUpperCase()}
-                  </span>
-                </div>
-                <span className="text-[10px] text-[#64748b] truncate">Prompt: {log.prompt}</span>
-              </div>
-            ))
-          )}
+      <Reveal delay={0.05}>
+        <div className="grid grid-cols-2 gap-3">
+          <Stat label="Total Handled" value={totalRequests} icon={Activity} tone="brand" />
+          <Stat label="Live Cost" value={`$${totalCost}`} icon={DollarSign} tone="ok" />
+          <Stat label="Threats Stopped" value={blockedRequests} icon={ShieldAlert} tone="bad" />
+          <Stat label="Active Agents" value={activeAgents} icon={Bot} tone="warn" />
         </div>
-      </div>
+      </Reveal>
+
+      {series.length > 1 && (
+        <Reveal delay={0.1}>
+          <Panel>
+            <SectionTitle hint="cumulative">Spend Trajectory</SectionTitle>
+            <div className="h-28 mt-3 -mx-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={series}>
+                  <defs>
+                    <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.4} />
+                      <stop offset="100%" stopColor="var(--brand)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="i" hide />
+                  <Tooltip
+                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--hairline)', borderRadius: 12, fontSize: 11, color: 'var(--ink)' }}
+                    labelStyle={{ display: 'none' }}
+                    formatter={(v: any) => [`$${v}`, 'cost']}
+                  />
+                  <Area type="monotone" dataKey="cost" stroke="var(--brand)" strokeWidth={2} fill="url(#costFill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </Reveal>
+      )}
+
+      <Reveal delay={0.15}>
+        <Panel>
+          <SectionTitle hint="last 6">Live Interception Stream</SectionTitle>
+          <div className="flex flex-col gap-2 mt-3">
+            {logs.length === 0 ? (
+              <EmptyState>No traffic detected yet.</EmptyState>
+            ) : (
+              logs.slice(0, 6).map((log, i) => (
+                <motion.div
+                  key={log.id || i}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                  className="rounded-xl border border-hairline bg-surface2/60 p-3 flex flex-col gap-1.5"
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-[12px] font-semibold text-ink">{log.agent}</span>
+                    <Badge tone={statusTone(log.status) as any}>{(log.status || 'unknown')}</Badge>
+                  </div>
+                  <span className="text-[11px] text-soft truncate">{log.prompt}</span>
+                </motion.div>
+              ))
+            )}
+          </div>
+        </Panel>
+      </Reveal>
     </div>
   );
 }

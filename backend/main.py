@@ -1,181 +1,200 @@
 # backend/main.py
-from fastapi import FastAPI
+"""Talamanda AI Trust Layer — gateway application entrypoint."""
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime, timezone
-import uuid
-import sqlalchemy
 
-from database import database, create_tables, audit_logs
-from mock_swarm import security_scan, call_model_real, calculate_cost, write_log
+from config import settings
+from database import database, create_tables
+from telemetry import instrument_app
 
-app = FastAPI(title="Talamanda AI Audit Gateway")
+from gateway.auth import Principal, authenticate, require_role
+from gateway.rate_limit import enforce_rate_limit
+from gateway import pipeline, review
+
+from agents.librarian import service as librarian
+from agents.librarian.router import router as librarian_router
+from agents.adversary.router import router as adversary_router
+from agents.notary.router import router as notary_router
+from agents.notary import service as notary_service
+from ingestion.feed import RegulationFeedIngester
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("talamanda")
+
+_ingester = RegulationFeedIngester()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await database.connect()
+    create_tables()
+    await librarian.seed_controls()
+    notary_service.register_subscribers()
+    await _ingester.start()
+    log.info("Trust Layer online (env=%s)", settings.environment)
+    yield
+    await _ingester.stop()
+    await database.disconnect()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+instrument_app(app)
+
+app.include_router(librarian_router)
+app.include_router(adversary_router)
+app.include_router(notary_router)
+
 
 # ── Request model ─────────────────────────────────────────────────────────────
 class ProxyRequest(BaseModel):
-    agent:  str    # Who is calling (e.g. "Marketing Agent", "Dashboard")
-    model:  str    # Model string (e.g. "gpt-4o-mini", "claude-3-5-sonnet-20241022")
+    agent: str
     prompt: str
+    model: str | None = None   # explicit model; if omitted, routed by task
+    task: str | None = None    # voice | content | reasoning | security | ...
 
-# ── Lifecycle ─────────────────────────────────────────────────────────────────
-@app.on_event('startup')
-async def startup():
-    await database.connect()
-    create_tables()
-
-@app.on_event('shutdown')
-async def shutdown():
-    await database.disconnect()
 
 # ── Core proxy endpoint ───────────────────────────────────────────────────────
-@app.post('/agent/request')
-async def handle_proxy_request(payload: ProxyRequest):
-    req_id    = f"req_{uuid.uuid4().hex[:6]}"
-    timestamp = datetime.now(timezone.utc).isoformat()
+@app.post("/agent/request")
+async def handle_proxy_request(
+    payload: ProxyRequest,
+    request: Request,
+    principal: Principal = Depends(authenticate),
+):
+    await enforce_rate_limit(request)
+    return await pipeline.process_request(
+        agent=payload.agent, model=payload.model, prompt=payload.prompt,
+        task=payload.task, tenant=principal.tenant,
+    )
 
-    is_blocked, threat_type, processed_prompt = security_scan(payload.prompt)
-
-    if is_blocked:
-        log_entry = {
-            'id': req_id, 'timestamp': timestamp, 'agent': payload.agent,
-            'prompt': processed_prompt,
-            'response': f"Blocked: {threat_type}",
-            'model': payload.model, 'cost': '$0.000000',
-            'input_tokens': 0, 'output_tokens': 0,
-            'status': 'blocked', 'threat_type': threat_type,
-        }
-        await write_log(log_entry)
-        return log_entry
-
-    try:
-        resp_text, in_tok, out_tok = await call_model_real(payload.model, payload.prompt)
-        real_cost = calculate_cost(payload.model, in_tok, out_tok)
-        log_entry = {
-            'id': req_id, 'timestamp': timestamp, 'agent': payload.agent,
-            'prompt': payload.prompt, 'response': resp_text,
-            'model': payload.model, 'cost': f"${real_cost:.6f}",
-            'input_tokens': in_tok, 'output_tokens': out_tok,
-            'status': 'success', 'threat_type': None,
-        }
-    except Exception as e:
-        log_entry = {
-            'id': req_id, 'timestamp': timestamp, 'agent': payload.agent,
-            'prompt': payload.prompt, 'response': f"Error: {str(e)}",
-            'model': payload.model, 'cost': '$0.000000',
-            'input_tokens': 0, 'output_tokens': 0,
-            'status': 'error', 'threat_type': None,
-        }
-
-    await write_log(log_entry)
-    return log_entry
 
 # ── Audit log endpoints ───────────────────────────────────────────────────────
-@app.get('/audit/logs')
-async def get_all_logs(limit: int = 100):
-    query = audit_logs.select().order_by(
-        audit_logs.c.timestamp.desc()
-    ).limit(limit)
-    rows = await database.fetch_all(query)
-    return [dict(r) for r in rows]
+from database import audit_logs  # noqa: E402
 
-@app.get('/audit/logs/agent/{agent_name}')
+
+@app.get("/audit/logs")
+async def get_all_logs(limit: int = 100):
+    q = audit_logs.select().order_by(audit_logs.c.timestamp.desc()).limit(limit)
+    return [dict(r) for r in await database.fetch_all(q)]
+
+
+@app.get("/audit/logs/agent/{agent_name}")
 async def get_logs_by_agent(agent_name: str):
-    query = audit_logs.select().where(
+    q = audit_logs.select().where(
         audit_logs.c.agent == agent_name
     ).order_by(audit_logs.c.timestamp.desc())
-    rows = await database.fetch_all(query)
-    return [dict(r) for r in rows]
+    return [dict(r) for r in await database.fetch_all(q)]
 
-@app.get('/audit/logs/status/{status}')
+
+@app.get("/audit/logs/status/{status}")
 async def get_logs_by_status(status: str):
-    """Filter by: success | blocked | error"""
-    query = audit_logs.select().where(
+    """Filter by: success | blocked | held | error"""
+    q = audit_logs.select().where(
         audit_logs.c.status == status
     ).order_by(audit_logs.c.timestamp.desc())
-    rows = await database.fetch_all(query)
-    return [dict(r) for r in rows]
+    return [dict(r) for r in await database.fetch_all(q)]
 
-# ── Dashboard stats endpoint — single call powers all KPI cards ───────────────
-@app.get('/audit/stats')
+
+@app.get("/audit/stats")
 async def get_stats():
-    """
-    Returns aggregated stats for the dashboard:
-    total requests, blocked count, total cost, 
-    per-model breakdown, per-agent breakdown.
-    """
     all_rows = await database.fetch_all(audit_logs.select())
     rows = [dict(r) for r in all_rows]
 
     if not rows:
         return {
-            'total_requests': 0,
-            'total_blocked':  0,
-            'total_errors':   0,
-            'total_cost_usd': 0.0,
-            'total_input_tokens':  0,
-            'total_output_tokens': 0,
-            'by_model':  {},
-            'by_agent':  {},
-            'by_status': {},
+            "total_requests": 0, "total_blocked": 0, "total_held": 0,
+            "total_errors": 0, "total_cost_usd": 0.0,
+            "total_input_tokens": 0, "total_output_tokens": 0,
+            "by_model": {}, "by_agent": {}, "by_status": {},
         }
 
-    total_cost = sum(
-        float(r['cost'].replace('$', ''))
-        for r in rows if r['cost']
-    )
+    def _cost(r):
+        try:
+            return float((r["cost"] or "$0").replace("$", ""))
+        except (ValueError, AttributeError):
+            return 0.0
 
-    by_model = {}
+    by_model: dict = {}
     for r in rows:
-        m = r['model']
-        if m not in by_model:
-            by_model[m] = {'requests': 0, 'cost': 0.0, 'input_tokens': 0, 'output_tokens': 0}
-        by_model[m]['requests']      += 1
-        by_model[m]['cost']          += float(r['cost'].replace('$', ''))
-        by_model[m]['input_tokens']  += r['input_tokens']  or 0
-        by_model[m]['output_tokens'] += r['output_tokens'] or 0
+        m = r["model"]
+        b = by_model.setdefault(m, {"requests": 0, "cost": 0.0, "input_tokens": 0, "output_tokens": 0})
+        b["requests"] += 1
+        b["cost"] += _cost(r)
+        b["input_tokens"] += r["input_tokens"] or 0
+        b["output_tokens"] += r["output_tokens"] or 0
 
-    by_agent = {}
+    by_agent: dict = {}
     for r in rows:
-        a = r['agent']
-        if a not in by_agent:
-            by_agent[a] = {'requests': 0, 'cost': 0.0}
-        by_agent[a]['requests'] += 1
-        by_agent[a]['cost']     += float(r['cost'].replace('$', ''))
+        a = r["agent"]
+        b = by_agent.setdefault(a, {"requests": 0, "cost": 0.0})
+        b["requests"] += 1
+        b["cost"] += _cost(r)
 
-    by_status = {}
+    by_status: dict = {}
     for r in rows:
-        s = r['status']
-        by_status[s] = by_status.get(s, 0) + 1
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
 
     return {
-        'total_requests':      len(rows),
-        'total_blocked':       by_status.get('blocked', 0),
-        'total_errors':        by_status.get('error',   0),
-        'total_cost_usd':      round(total_cost, 6),
-        'total_input_tokens':  sum(r['input_tokens']  or 0 for r in rows),
-        'total_output_tokens': sum(r['output_tokens'] or 0 for r in rows),
-        'by_model':  by_model,
-        'by_agent':  by_agent,
-        'by_status': by_status,
+        "total_requests": len(rows),
+        "total_blocked": by_status.get("blocked", 0),
+        "total_held": by_status.get("held", 0),
+        "total_errors": by_status.get("error", 0),
+        "total_cost_usd": round(sum(_cost(r) for r in rows), 6),
+        "total_input_tokens": sum(r["input_tokens"] or 0 for r in rows),
+        "total_output_tokens": sum(r["output_tokens"] or 0 for r in rows),
+        "by_model": by_model,
+        "by_agent": by_agent,
+        "by_status": by_status,
     }
 
-@app.get('/audit/threats')
-async def get_threats():
-    """Returns only blocked requests with threat classification."""
-    query = audit_logs.select().where(
-        audit_logs.c.status == 'blocked'
-    ).order_by(audit_logs.c.timestamp.desc())
-    rows = await database.fetch_all(query)
-    return [dict(r) for r in rows]
 
-@app.get('/health')
+@app.get("/audit/threats")
+async def get_threats():
+    q = audit_logs.select().where(
+        audit_logs.c.status == "blocked"
+    ).order_by(audit_logs.c.timestamp.desc())
+    return [dict(r) for r in await database.fetch_all(q)]
+
+
+# ── Review queue (human-in-the-loop) ──────────────────────────────────────────
+class ReviewDecision(BaseModel):
+    decision: str   # approved | rejected
+    reviewer: str = "operator"
+
+
+@app.get("/review/pending")
+async def review_pending(limit: int = 100):
+    return await review.list_pending(limit)
+
+
+@app.post("/review/{review_id}")
+async def review_resolve(
+    review_id: str,
+    body: ReviewDecision,
+    principal: Principal = Depends(require_role("operator")),
+):
+    ok = await review.resolve(
+        review_id, body.decision, principal.subject if body.reviewer == "operator" else body.reviewer,
+        datetime.now(timezone.utc).isoformat(),
+    )
+    return {"ok": ok, "review_id": review_id, "decision": body.decision}
+
+
+@app.get("/health")
 async def health():
-    return {'status': 'ok', 'timestamp': datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}

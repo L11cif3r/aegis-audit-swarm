@@ -3,6 +3,10 @@
 .env.local
 .env.*
 
+# ...but keep the safe templates
+!.env.example
+!**/.env.example
+
 # Python Backend
 backend/venv/
 backend/__pycache__/

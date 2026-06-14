@@ -1,0 +1,70 @@
+# Talamanda Trust Node — one-command sovereign deployment.
+#
+#   docker compose up --build
+#
+# All three Aegis agents run inside the `gateway` container within the
+# customer's boundary. Postgres is on an INTERNAL-only network (no host port,
+# no external route). The control library / gateway API is reachable only via
+# the web reverse proxy. Outbound egress (LLM + regulation feeds) should be
+# constrained to the allowlist at the host firewall in production (PDF 5.2).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: trust
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_prod}
+      POSTGRES_DB: talamanda
+    volumes:
+      - trust_pgdata:/var/lib/postgresql/data
+    networks:
+      - internal           # internal only — never published to the host
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trust -d talamanda"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build: ./backend
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgresql://trust:${POSTGRES_PASSWORD:-changeme_in_prod}@db:5432/talamanda
+      DB_SSL_REQUIRED: "false"        # in-cluster traffic on the internal net
+      API_KEYS: ${API_KEYS:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      NOTARY_PRIVATE_KEY_PEM: ${NOTARY_PRIVATE_KEY_PEM:-}
+      RISK_HOLD_THRESHOLD: ${RISK_HOLD_THRESHOLD:-0.6}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal           # talk to db
+      - edge               # be reachable by web + make egress calls
+    # No host port: the gateway is only reachable through the web proxy.
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    depends_on:
+      - gateway
+    networks:
+      - edge
+    ports:
+      - "8080:80"          # the ONLY publicly exposed surface (the dashboard)
+
+volumes:
+  trust_pgdata:
+
+networks:
+  internal:
+    internal: true          # no external connectivity for the DB tier
+  edge:
+    driver: bridge
