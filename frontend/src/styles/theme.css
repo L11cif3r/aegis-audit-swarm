@@ -255,6 +255,54 @@
     background: var(--hairline);
     border-radius: 9999px;
   }
+
+  /* 3D helpers */
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  .pop-z {
+    transform: translateZ(40px);
+  }
+  .pop-z-sm {
+    transform: translateZ(22px);
+  }
+
+  /* Card surface used across the dashboard */
+  .card-surface {
+    background:
+      linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+    border: 1px solid var(--hairline);
+  }
+  .card-lift {
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  .card-lift:hover {
+    border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+    box-shadow:
+      0 1px 0 0 color-mix(in srgb, var(--brand) 10%, transparent) inset,
+      0 24px 50px -28px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* ── Custom cursor: hide the native one on fine-pointer devices ── */
+.cursor-none,
+.cursor-none * {
+  cursor: none !important;
+}
+
+/* Grain / noise texture overlay */
+.grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 html {

@@ -7,6 +7,8 @@ import {
 import Background from './components/shell/Background';
 import LoadingScreen from './components/shell/LoadingScreen';
 import TopNav, { type TabDef } from './components/shell/TopNav';
+import CustomCursor from './components/shell/CustomCursor';
+import Landing from './components/landing/Landing';
 import { apiGet } from '../lib/api';
 
 import Component01DashboardOverview from '../imports/01DashboardOverview';
@@ -37,15 +39,22 @@ const VIEWS: Record<string, React.ComponentType> = {
   evidence: Component07Evidence,
 };
 
+type Phase = 'loading' | 'landing' | 'app';
+
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
-  const [loading, setLoading] = useState(true);
+  const [phase, setPhase] = useState<Phase>('loading');
   const [live, setLive] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 1700);
+    const t = setTimeout(() => setPhase('landing'), 1700);
     return () => clearTimeout(t);
   }, []);
+
+  useEffect(() => {
+    // Reset scroll when leaving the landing experience.
+    if (phase === 'app') window.scrollTo({ top: 0 });
+  }, [phase]);
 
   useEffect(() => {
     const ping = async () => {
@@ -66,24 +75,48 @@ export default function App() {
   return (
     <div className="relative min-h-screen w-full text-ink font-['Inter',sans-serif] selection:bg-brand/30">
       <Background />
+      <CustomCursor />
 
-      <AnimatePresence>{loading && <LoadingScreen key="loader" />}</AnimatePresence>
+      <AnimatePresence>{phase === 'loading' && <LoadingScreen key="loader" />}</AnimatePresence>
 
-      <TopNav tabs={TABS} current={currentView} onChange={setCurrentView} live={live} />
+      <AnimatePresence mode="wait">
+        {phase === 'landing' && (
+          <Landing key="landing" onEnter={() => setPhase('app')} />
+        )}
 
-      <main className="relative mx-auto w-full max-w-2xl px-4 pt-24 pb-20 sm:pt-28">
-        <AnimatePresence mode="wait">
+        {phase === 'app' && (
           <motion.div
-            key={currentView}
-            initial={{ opacity: 0, y: 14 }}
+            key="app"
+            initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           >
-            <View />
+            <TopNav tabs={TABS} current={currentView} onChange={setCurrentView} live={live} />
+
+            <main className="relative mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10 pt-28 pb-24 sm:pt-32">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={currentView}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <View />
+                </motion.div>
+              </AnimatePresence>
+
+              <footer className="mt-20 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-hairline pt-6 text-[11px] text-soft">
+                <span>Aegis Audit Swarm — Talamanda AI Trust Layer</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={`size-1.5 rounded-full ${live ? 'bg-ok' : 'bg-bad'}`} />
+                  {live ? 'Gateway connected' : 'Gateway offline'}
+                </span>
+              </footer>
+            </main>
           </motion.div>
-        </AnimatePresence>
-      </main>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

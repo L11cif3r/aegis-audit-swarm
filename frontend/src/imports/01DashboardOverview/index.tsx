@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Activity, Bot, DollarSign, ShieldAlert } from 'lucide-react';
-import { motion } from 'motion/react';
 import {
   AreaChart, Area, ResponsiveContainer, Tooltip, XAxis,
 } from 'recharts';
 import { api } from '../../lib/api';
-import { PageHeader, Stat, Panel, SectionTitle, Badge, EmptyState } from '../../app/components/shell/primitives';
+import { PageHeader, Stat, Panel, SectionTitle, Badge, EmptyState, Bento, FeedRow } from '../../app/components/shell/primitives';
 import Reveal from '../../app/components/shell/Reveal';
 
 function statusTone(status: string) {
@@ -32,10 +31,9 @@ export default function Component01DashboardOverview() {
 
   const totalRequests = logs.length;
   const blockedRequests = logs.filter((l) => l.status === 'blocked' || l.status === 'held').length;
-  const totalCost = logs.reduce((acc, log) => acc + (parseFloat((log.cost || '$0').replace('$', '')) || 0), 0).toFixed(4);
+  const totalCost = logs.reduce((acc, log) => acc + (parseFloat((log.cost || '$0').replace('$', '')) || 0), 0);
   const activeAgents = totalRequests > 0 ? [...new Set(logs.map((l) => l.agent))].length : 0;
 
-  // Build a small cost sparkline from the chronological logs.
   const series = [...logs]
     .reverse()
     .reduce<{ i: number; cost: number }[]>((acc, log) => {
@@ -45,7 +43,7 @@ export default function Component01DashboardOverview() {
     }, []);
 
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-8">
       <PageHeader
         kicker="Control Plane"
         title="Every agent action, refereed in real time."
@@ -53,67 +51,65 @@ export default function Component01DashboardOverview() {
       />
 
       <Reveal delay={0.05}>
-        <div className="grid grid-cols-2 gap-3">
-          <Stat label="Total Handled" value={totalRequests} icon={Activity} tone="brand" />
-          <Stat label="Live Cost" value={`$${totalCost}`} icon={DollarSign} tone="ok" />
-          <Stat label="Threats Stopped" value={blockedRequests} icon={ShieldAlert} tone="bad" />
-          <Stat label="Active Agents" value={activeAgents} icon={Bot} tone="warn" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+          <Stat label="Total Handled" count={totalRequests} icon={Activity} tone="brand" />
+          <Stat label="Live Cost" count={totalCost} prefix="$" decimals={4} icon={DollarSign} tone="ok" />
+          <Stat label="Threats Stopped" count={blockedRequests} icon={ShieldAlert} tone="bad" />
+          <Stat label="Active Agents" count={activeAgents} icon={Bot} tone="warn" />
         </div>
       </Reveal>
 
-      {series.length > 1 && (
-        <Reveal delay={0.1}>
-          <Panel>
+      <Bento>
+        <Reveal delay={0.1} className="lg:col-span-7">
+          <Panel className="h-full">
             <SectionTitle hint="cumulative">Spend Trajectory</SectionTitle>
-            <div className="h-28 mt-3 -mx-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={series}>
-                  <defs>
-                    <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.4} />
-                      <stop offset="100%" stopColor="var(--brand)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="i" hide />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--hairline)', borderRadius: 12, fontSize: 11, color: 'var(--ink)' }}
-                    labelStyle={{ display: 'none' }}
-                    formatter={(v: any) => [`$${v}`, 'cost']}
-                  />
-                  <Area type="monotone" dataKey="cost" stroke="var(--brand)" strokeWidth={2} fill="url(#costFill)" />
-                </AreaChart>
-              </ResponsiveContainer>
+            <div className="h-64 mt-4 -mx-2">
+              {series.length > 1 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={series}>
+                    <defs>
+                      <linearGradient id="costFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.4} />
+                        <stop offset="100%" stopColor="var(--brand)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="i" hide />
+                    <Tooltip
+                      contentStyle={{ background: 'var(--surface)', border: '1px solid var(--hairline)', borderRadius: 12, fontSize: 11, color: 'var(--ink)' }}
+                      labelStyle={{ display: 'none' }}
+                      formatter={(v: any) => [`$${v}`, 'cost']}
+                    />
+                    <Area type="monotone" dataKey="cost" stroke="var(--brand)" strokeWidth={2.5} fill="url(#costFill)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState>Send traffic to chart cumulative spend.</EmptyState>
+              )}
             </div>
           </Panel>
         </Reveal>
-      )}
 
-      <Reveal delay={0.15}>
-        <Panel>
-          <SectionTitle hint="last 6">Live Interception Stream</SectionTitle>
-          <div className="flex flex-col gap-2 mt-3">
-            {logs.length === 0 ? (
-              <EmptyState>No traffic detected yet.</EmptyState>
-            ) : (
-              logs.slice(0, 6).map((log, i) => (
-                <motion.div
-                  key={log.id || i}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                  className="rounded-xl border border-hairline bg-surface2/60 p-3 flex flex-col gap-1.5"
-                >
-                  <div className="flex justify-between items-center">
-                    <span className="text-[12px] font-semibold text-ink">{log.agent}</span>
-                    <Badge tone={statusTone(log.status) as any}>{(log.status || 'unknown')}</Badge>
-                  </div>
-                  <span className="text-[11px] text-soft truncate">{log.prompt}</span>
-                </motion.div>
-              ))
-            )}
-          </div>
-        </Panel>
-      </Reveal>
+        <Reveal delay={0.15} className="lg:col-span-5">
+          <Panel className="h-full">
+            <SectionTitle hint="last 8">Live Interception Stream</SectionTitle>
+            <div className="flex flex-col gap-2 mt-4 max-h-72 overflow-y-auto scrollbar-slim pr-1">
+              {logs.length === 0 ? (
+                <EmptyState>No traffic detected yet.</EmptyState>
+              ) : (
+                logs.slice(0, 8).map((log, i) => (
+                  <FeedRow key={log.id || i} i={i} className="rounded-xl border border-hairline bg-surface2/60 p-3 flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[12px] font-semibold text-ink">{log.agent}</span>
+                      <Badge tone={statusTone(log.status) as any}>{(log.status || 'unknown')}</Badge>
+                    </div>
+                    <span className="text-[11px] text-soft truncate">{log.prompt}</span>
+                  </FeedRow>
+                ))
+              )}
+            </div>
+          </Panel>
+        </Reveal>
+      </Bento>
     </div>
   );
 }
