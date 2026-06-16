@@ -27,7 +27,7 @@ email-validator==2.3.0
 alembic==1.14.0
 
 # ── Distributed rate limiting / login lockout (optional; in-memory fallback) ──
-redis==5.2.1
+redis==8.0.0
 
 # ── Reporting (Safety Certificate / audit packages) ──────────────────────────
 reportlab==4.2.5
