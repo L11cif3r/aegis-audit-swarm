@@ -34,7 +34,7 @@ reportlab==4.2.5
 
 # ── Observability ────────────────────────────────────────────────────────────
 opentelemetry-api==1.29.0
-opentelemetry-sdk==1.29.0
+opentelemetry-sdk==1.42.1
 opentelemetry-instrumentation-fastapi==0.50b0
 
 # ── Utilities ────────────────────────────────────────────────────────────────
