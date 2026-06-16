@@ -8,6 +8,28 @@ import { PageHeader, Stat, Panel, SectionTitle, EmptyState, Bento } from '../../
 import Reveal from '../../app/components/shell/Reveal';
 
 const PALETTE = ['var(--brand)', 'var(--ok)', 'var(--warn)', 'var(--bad)', '#a78bfa'];
+
+function BudgetMeter({ label, window: w }: { label: string; window: any }) {
+  const spent = w?.spent_usd ?? 0;
+  const limit = w?.limit_usd ?? null;
+  const frac = limit ? Math.min(spent / limit, 1) : 0;
+  const pct = Math.round(frac * 100);
+  const tone = frac >= 1 ? 'var(--bad)' : frac >= 0.8 ? 'var(--warn)' : 'var(--ok)';
+  return (
+    <div className="rounded-xl border border-hairline bg-surface2/60 p-4">
+      <div className="flex justify-between items-baseline gap-2">
+        <span className="text-[12px] font-semibold text-ink">{label}</span>
+        <span className="font-mono text-[12px] text-ink tabular-nums">
+          ${spent.toFixed(4)}{limit != null ? ` / $${Number(limit).toFixed(2)}` : ''}
+        </span>
+      </div>
+      <div className="mt-3 h-2 rounded-full bg-hairline overflow-hidden">
+        <div className="h-full rounded-full transition-all" style={{ width: `${limit ? pct : 0}%`, background: tone }} />
+      </div>
+      <p className="text-[10px] text-soft mt-2">{limit != null ? `${pct}% of cap` : 'No cap set'}</p>
+    </div>
+  );
+}
 const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
@@ -16,11 +38,23 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export default function Component05CostBilling() {
   const [stats, setStats] = useState<any>(null);
+  const [summary, setSummary] = useState<any>(null);
+  const [dayLimit, setDayLimit] = useState('');
+  const [monthLimit, setMonthLimit] = useState('');
+  const [budgetTouched, setBudgetTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [budgetMsg, setBudgetMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        setStats(await api.stats());
+        const [s, sum] = await Promise.all([api.stats(), api.costSummary()]);
+        setStats(s);
+        setSummary(sum);
+        if (!budgetTouched) {
+          setDayLimit(sum?.day?.limit_usd != null ? String(sum.day.limit_usd) : '');
+          setMonthLimit(sum?.month?.limit_usd != null ? String(sum.month.limit_usd) : '');
+        }
       } catch {
         /* offline */
       }
@@ -28,7 +62,25 @@ export default function Component05CostBilling() {
     fetchStats();
     const interval = setInterval(fetchStats, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [budgetTouched]);
+
+  const saveBudget = async () => {
+    setSaving(true);
+    setBudgetMsg(null);
+    try {
+      await api.setBudget({
+        daily_limit_usd: dayLimit ? Number(dayLimit) : null,
+        monthly_limit_usd: monthLimit ? Number(monthLimit) : null,
+      });
+      setBudgetTouched(false);
+      setBudgetMsg('Budget saved.');
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      setBudgetMsg(/403|role|permission/i.test(msg) ? 'Operator role required to set budgets.' : 'Could not save budget.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const totalCost = stats?.total_cost_usd || 0;
   const byModel: Record<string, any> = stats?.by_model || {};
@@ -91,6 +143,49 @@ export default function Component05CostBilling() {
           </Panel>
         </Reveal>
       </Bento>
+
+      <Reveal delay={0.11}>
+        <Panel>
+          <SectionTitle hint="spend caps">Budgets</SectionTitle>
+          <div className="grid md:grid-cols-2 gap-4 mt-4">
+            <BudgetMeter label="Today" window={summary?.day} />
+            <BudgetMeter label="This month" window={summary?.month} />
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3 mt-5">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-soft">Daily limit (USD)</span>
+              <input
+                type="number" min="0" step="0.01" inputMode="decimal"
+                value={dayLimit}
+                onChange={(e) => { setDayLimit(e.target.value); setBudgetTouched(true); }}
+                placeholder="No cap"
+                className="rounded-xl border border-hairline bg-surface2/60 px-3 py-2 text-[13px] text-ink font-mono tabular-nums outline-none focus:border-brand"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-soft">Monthly limit (USD)</span>
+              <input
+                type="number" min="0" step="0.01" inputMode="decimal"
+                value={monthLimit}
+                onChange={(e) => { setMonthLimit(e.target.value); setBudgetTouched(true); }}
+                placeholder="No cap"
+                className="rounded-xl border border-hairline bg-surface2/60 px-3 py-2 text-[13px] text-ink font-mono tabular-nums outline-none focus:border-brand"
+              />
+            </label>
+          </div>
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              onClick={saveBudget}
+              disabled={saving || !budgetTouched}
+              className="rounded-xl bg-brand px-4 py-2 text-[12px] font-semibold text-white disabled:opacity-40 transition-opacity"
+            >
+              {saving ? 'Saving…' : 'Save budget'}
+            </button>
+            {budgetMsg && <span className="text-[11px] text-soft">{budgetMsg}</span>}
+            <span className="text-[11px] text-soft ml-auto">Requests are blocked once a cap is reached.</span>
+          </div>
+        </Panel>
+      </Reveal>
 
       <Reveal delay={0.12}>
         <Panel>

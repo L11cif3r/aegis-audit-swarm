@@ -19,6 +19,16 @@ google-genai==0.8.0
 # ── Crypto (Notary evidence signing) ─────────────────────────────────────────
 cryptography==44.0.0
 
+# ── Auth (password hashing + email validation) ───────────────────────────────
+bcrypt==5.0.0
+email-validator==2.3.0
+
+# ── Migrations ───────────────────────────────────────────────────────────────
+alembic==1.14.0
+
+# ── Distributed rate limiting / login lockout (optional; in-memory fallback) ──
+redis==5.2.1
+
 # ── Reporting (Safety Certificate / audit packages) ──────────────────────────
 reportlab==4.2.5
 

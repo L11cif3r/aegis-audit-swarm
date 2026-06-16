@@ -44,13 +44,76 @@ class Settings(BaseSettings):
     api_keys: str = Field(default="")
     jwt_secret: Optional[str] = None
     jwt_algorithm: str = "HS256"
+    jwt_expiry_days: int = Field(default=7)         # legacy long-lived token (fallback)
+    access_token_minutes: int = Field(default=30)   # short-lived access token
+    refresh_token_days: int = Field(default=30)     # rotating refresh token lifetime
     cors_origins: str = Field(default="*")
+
+    # Public URL of the dashboard, used to build email verification / reset links.
+    app_base_url: str = Field(default="http://localhost:5173")
+    require_email_verification: bool = Field(default=False)
+
+    # Secret used to encrypt provider API keys at rest. Any passphrase works
+    # (a Fernet key is derived from it). Falls back to jwt_secret if unset;
+    # if neither is configured, keys are stored as plaintext (dev only).
+    encryption_key: Optional[str] = None
+
+    # ── Auth safety ───────────────────────────────────────────────────────────
+    password_min_length: int = Field(default=10)
+    login_max_attempts: int = Field(default=5)        # before temporary lockout
+    login_lockout_minutes: int = Field(default=15)
 
     # ── Rate limiting ─────────────────────────────────────────────────────────
     rate_limit_per_minute: int = Field(default=120)
+    # Optional Redis backend for rate limiting (multi-instance safe). Falls back
+    # to an in-process limiter when unset.
+    redis_url: Optional[str] = None
+
+    # ── Request / LLM guards ──────────────────────────────────────────────────
+    max_request_bytes: int = Field(default=1_000_000)     # 1 MB request body cap
+    max_prompt_chars: int = Field(default=100_000)
+    max_output_tokens: int = Field(default=4096)          # hard cap per call
+    llm_timeout_seconds: float = Field(default=60.0)
+
+    # ── Audit data governance ─────────────────────────────────────────────────
+    audit_retention_days: int = Field(default=0)          # 0 = keep forever
+    encrypt_audit_content: bool = Field(default=False)     # encrypt prompt/response at rest
+
+    # ── Email (account verification + password reset) ─────────────────────────
+    smtp_host: Optional[str] = None
+    smtp_port: int = Field(default=587)
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: str = Field(default="no-reply@talamanda.local")
+    smtp_tls: bool = Field(default=True)
+
+    @property
+    def email_enabled(self) -> bool:
+        return bool(self.smtp_host)
+
+    # ── Observability ─────────────────────────────────────────────────────────
+    otel_exporter: str = Field(default="none")            # none | console | otlp
+    otel_exporter_endpoint: Optional[str] = None          # OTLP collector URL
+    security_headers: bool = Field(default=True)
+    hsts: bool = Field(default=False)                      # enable when behind TLS
+
+    # ── Schema management ─────────────────────────────────────────────────────
+    # Dev convenience: create/sync tables on startup. Disable in production and
+    # manage schema with Alembic migrations instead.
+    auto_migrate: bool = Field(default=True)
 
     # ── Risk gate ─────────────────────────────────────────────────────────────
     risk_hold_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+
+    # ── Cost accounting ───────────────────────────────────────────────────────
+    # Price multiplier applied to cached input tokens when a model has no
+    # explicit cached rate (most providers discount cache reads heavily).
+    cached_input_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Optional spend caps (USD). 0 disables. Per-tenant overrides live in the DB.
+    default_daily_budget_usd: float = Field(default=0.0, ge=0.0)
+    default_monthly_budget_usd: float = Field(default=0.0, ge=0.0)
+    # Emit an alert once spend crosses this fraction of a budget.
+    budget_alert_fraction: float = Field(default=0.8, ge=0.0, le=1.0)
 
     # ── Vector DB (Librarian RAG) ─────────────────────────────────────────────
     vector_backend: str = Field(default="memory")  # memory | pgvector | pinecone
@@ -61,6 +124,23 @@ class Settings(BaseSettings):
     # PEM-encoded RSA private key. When absent, the Notary generates an ephemeral
     # key at startup (acceptable for dev; production must mount an HSM-backed key).
     notary_private_key_pem: Optional[str] = None
+    # Signer backend: "local" (PEM in env) or "kms" (cloud KMS — see signing.py).
+    notary_key_backend: str = Field(default="local")
+    # Optional retired PUBLIC keys (PEM blocks, may be concatenated) so evidence
+    # signed before a key rotation still verifies.
+    notary_verify_keys: Optional[str] = None
+
+    # ── Security scanning ─────────────────────────────────────────────────────
+    # LLM-based injection/jailbreak classifier in addition to regex (costs tokens).
+    security_llm_scan: bool = Field(default=False)
+    security_scan_model: Optional[str] = None        # model id for the classifier
+    security_scan_outputs: bool = Field(default=True)  # scan model responses too
+
+    # ── Embeddings (Librarian RAG) ────────────────────────────────────────────
+    # auto = OpenAI embeddings if a key exists, else local hashing embedding.
+    embedding_backend: str = Field(default="auto")   # auto | openai | local
+    embedding_model: str = Field(default="text-embedding-3-small")
+    embedding_dim: int = Field(default=256)          # local hashing-embedding dim
 
     # ── Regulation feed ingester ──────────────────────────────────────────────
     regulation_feed_interval_hours: int = Field(default=6)
@@ -81,6 +161,43 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
+
+    @property
+    def effective_encryption_secret(self) -> Optional[str]:
+        return self.encryption_key or self.jwt_secret
+
+    def validate_runtime(self) -> list[str]:
+        """Return a list of fatal misconfigurations for the current environment.
+
+        Empty list => safe to start. In production these are hard errors; in
+        development they are surfaced as warnings only.
+        """
+        problems: list[str] = []
+        if not self.database_url:
+            problems.append("DATABASE_URL is required.")
+
+        if self.is_production:
+            if not self.jwt_secret:
+                problems.append("JWT_SECRET must be set in production (token signing).")
+            elif len(self.jwt_secret) < 32:
+                problems.append("JWT_SECRET is too short; use >=32 random chars.")
+            if not self.encryption_key:
+                problems.append(
+                    "ENCRYPTION_KEY must be set in production (provider keys at rest)."
+                )
+            if self.cors_origins.strip() == "*":
+                problems.append(
+                    "CORS_ORIGINS must be an explicit allow-list in production, not '*'."
+                )
+            if not self.notary_private_key_pem:
+                problems.append(
+                    "NOTARY_PRIVATE_KEY_PEM must be set in production (stable evidence signing key)."
+                )
+            if self.auto_migrate:
+                problems.append(
+                    "AUTO_MIGRATE must be false in production; use Alembic migrations."
+                )
+        return problems
 
 
 @lru_cache

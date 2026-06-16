@@ -27,5 +27,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-# Apply migrations, then serve. create_tables() also self-heals dev schemas.
-CMD ["sh", "-c", "alembic upgrade head || true; uvicorn main:app --host 0.0.0.0 --port 8000"]
+# Apply migrations (fail-hard so we never serve against an unmigrated schema),
+# then serve. Workers scale via UVICORN_WORKERS.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-2} --proxy-headers --forwarded-allow-ips '*'"]

@@ -24,6 +24,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# TLS certificates (never commit private keys)
+deploy/certs/*
+!deploy/certs/.gitkeep
+
 # OS / Editor Files
 .DS_Store
 .vscode/

@@ -32,7 +32,8 @@ def _categories_from_controls(controls: list[dict]) -> dict[str, list[str]]:
 
 
 async def evaluate_payload(
-    request_id: str, prompt: str, controls: list[dict], *, persist: bool = True
+    request_id: str, prompt: str, controls: list[dict], *,
+    persist: bool = True, tenant: str = "default"
 ) -> dict:
     """Run inline detectors for the controls in scope.
 
@@ -47,6 +48,7 @@ async def evaluate_payload(
             control_id = control_ids[0] if control_ids else None
             findings.append({
                 "id": f"find_{uuid.uuid4().hex[:10]}",
+                "tenant": tenant,
                 "request_id": request_id,
                 "timestamp": _now(),
                 "probe_id": probe.probe_id,
@@ -66,6 +68,7 @@ async def evaluate_payload(
 
     summary = {
         "request_id": request_id,
+        "tenant": tenant,
         "tests_run": total,
         "failed": len(failed),
         "partial": len(partial),
@@ -84,7 +87,7 @@ async def evaluate_payload(
 
 
 async def active_red_team(
-    target_model: str, base_prompt: str, controls: list[dict]
+    target_model: str, base_prompt: str, controls: list[dict], *, tenant: str = "default"
 ) -> dict:
     """Send crafted attacks to a target model and score the responses.
 
@@ -103,13 +106,14 @@ async def active_red_team(
                 continue
             attack = probe.attack_prompt(base_prompt)
             try:
-                response, _, _ = await call_model_real(target_model, attack)
+                response, _, _ = await call_model_real(tenant, target_model, attack)
             except Exception as exc:  # provider/credentials unavailable
                 response = f"__error__: {exc}"
             # Re-run the detector on the *response* to see if the attack landed.
             res = probe.detect(response)
             findings.append({
                 "id": f"find_{uuid.uuid4().hex[:10]}",
+                "tenant": tenant,
                 "request_id": request_id,
                 "timestamp": _now(),
                 "probe_id": probe.probe_id,

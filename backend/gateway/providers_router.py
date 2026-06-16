@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from gateway.auth import Principal, require_role
+from gateway.auth import Principal, authenticate, require_role
 from gateway import provider_store
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -38,15 +38,15 @@ async def get_catalog():
 
 
 @router.get("/providers")
-async def list_providers():
-    return await provider_store.list_providers()
+async def list_providers(principal: Principal = Depends(authenticate)):
+    return await provider_store.list_providers(principal.tenant)
 
 
 @router.post("/providers/{provider_id}")
 async def update_provider(
     provider_id: str,
     body: ProviderUpdate,
-    _: Principal = Depends(require_role("operator")),
+    principal: Principal = Depends(require_role("operator")),
 ):
     payload = body.model_dump(exclude_none=True)
     if provider_id != "custom":
@@ -55,7 +55,7 @@ async def update_provider(
         payload["kind"] = "custom"
 
     target = provider_id if provider_id != "custom" else "custom"
-    updated = await provider_store.update_provider(target, payload)
+    updated = await provider_store.update_provider(principal.tenant, target, payload)
     if not updated:
         raise HTTPException(status_code=404, detail="Unknown provider")
     return updated
@@ -65,7 +65,7 @@ async def update_provider(
 async def test_provider(
     provider_id: str,
     body: ProviderTestRequest | None = None,
-    _: Principal = Depends(require_role("operator")),
+    principal: Principal = Depends(require_role("operator")),
 ):
     from llm.providers import test_connection
 
@@ -75,5 +75,7 @@ async def test_provider(
         raise HTTPException(status_code=400, detail="Save custom provider first, then test by its ID")
     if not is_builtin_provider(provider_id) and not provider_store.is_custom_provider(provider_id):
         raise HTTPException(status_code=404, detail="Unknown provider")
+    # Ensure the tenant's providers are loaded before testing.
+    await provider_store.ensure_seeded(principal.tenant)
     model = body.model if body else None
-    return await test_connection(provider_id, model=model)
+    return await test_connection(principal.tenant, provider_id, model=model)

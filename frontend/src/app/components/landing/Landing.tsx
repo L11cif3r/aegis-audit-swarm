@@ -8,7 +8,10 @@ import Magnetic from '../shell/Magnetic';
 const Scene3D = lazy(() => import('./Scene3D'));
 
 interface LandingProps {
-  onEnter: () => void;
+  onExplore: () => void;
+  onLogin: () => void;
+  onSignup: () => void;
+  authed: boolean;
 }
 
 // One full-height section whose content drifts + fades based on its own scroll
@@ -48,7 +51,7 @@ const STEPS = [
   { icon: BadgeCheck, kicker: 'Certify', title: 'Proof that stands up in court.', body: 'Outcomes are hash-chained and cryptographically signed into an immutable ledger — a live Trust Score and audit-ready evidence.' },
 ];
 
-export default function Landing({ onEnter }: LandingProps) {
+export default function Landing({ onExplore, onLogin, onSignup, authed }: LandingProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({ target: containerRef, offset: ['start start', 'end end'] });
   const smooth = useSpring(scrollYProgress, { stiffness: 80, damping: 24, mass: 0.4 });
@@ -80,7 +83,35 @@ export default function Landing({ onEnter }: LandingProps) {
           </div>
           <span className="font-display text-sm text-ink">AEGIS</span>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2 sm:gap-3">
+          {authed ? (
+            <button
+              onClick={onExplore}
+              data-cursor="hover"
+              className="rounded-full bg-brand text-brandink text-[12.5px] font-semibold px-4 py-2 hover:opacity-95 transition-opacity"
+            >
+              Dashboard
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onLogin}
+                data-cursor="hover"
+                className="text-[12.5px] font-medium text-soft hover:text-ink transition-colors px-2"
+              >
+                Log in
+              </button>
+              <button
+                onClick={onSignup}
+                data-cursor="hover"
+                className="rounded-full bg-brand text-brandink text-[12.5px] font-semibold px-4 py-2 hover:opacity-95 transition-opacity"
+              >
+                Sign up
+              </button>
+            </>
+          )}
+          <ThemeToggle />
+        </div>
       </div>
 
       {/* Scroll progress bar */}
@@ -143,11 +174,11 @@ export default function Landing({ onEnter }: LandingProps) {
         </p>
         <Magnetic className="mt-10" strength={0.5}>
           <button
-            onClick={onEnter}
+            onClick={onExplore}
             data-cursor="hover"
             className="group inline-flex items-center gap-2.5 rounded-full bg-brand text-brandink font-semibold text-sm px-7 py-4 shadow-xl shadow-brand/20 hover:opacity-95 transition-opacity"
           >
-            Explore
+            {authed ? 'Enter dashboard' : 'Explore'}
             <ArrowRight size={17} className="transition-transform group-hover:translate-x-1" />
           </button>
         </Magnetic>

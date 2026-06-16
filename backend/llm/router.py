@@ -165,11 +165,11 @@ def select_model(requested: str | None, task: str | None) -> ModelChoice:
     return route_by_task(task)
 
 
-def calculate_cost(model: str, input_tok: int, output_tok: int) -> float:
+def calculate_cost(model: str, input_tok: int, output_tok: int, tenant: str = "default") -> float:
     try:
         from gateway.provider_store import pricing_for_model
 
-        p = pricing_for_model(model)
+        p = pricing_for_model(tenant, model)
     except Exception:
         choice = resolve_model(model)
         p = PRICE_PER_TOKEN.get(choice.model, _FALLBACK_PRICE)

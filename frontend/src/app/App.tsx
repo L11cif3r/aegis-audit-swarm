@@ -9,7 +9,23 @@ import LoadingScreen from './components/shell/LoadingScreen';
 import TopNav, { type TabDef } from './components/shell/TopNav';
 import CustomCursor from './components/shell/CustomCursor';
 import Landing from './components/landing/Landing';
+import AuthPage from './components/auth/AuthPage';
+import AccountActionPage from './components/auth/AccountActionPage';
 import { apiGet } from '../lib/api';
+import { useAuth } from '../lib/auth';
+
+// Detect a verify-email / reset-password deep link from the URL.
+function readAccountAction():
+  | { action: 'verify-email' | 'reset-password'; token: string }
+  | null {
+  if (typeof window === 'undefined') return null;
+  const path = window.location.pathname;
+  const token = new URLSearchParams(window.location.search).get('token');
+  if (!token) return null;
+  if (path.endsWith('/verify-email')) return { action: 'verify-email', token };
+  if (path.endsWith('/reset-password')) return { action: 'reset-password', token };
+  return null;
+}
 
 import Component01DashboardOverview from '../imports/01DashboardOverview';
 import Component02SecurityCenter from '../imports/02SecurityCenter';
@@ -42,22 +58,65 @@ const VIEWS: Record<string, React.ComponentType> = {
   gateway: Component08GatewayConfig,
 };
 
-type Phase = 'loading' | 'landing' | 'app';
+type Phase = 'loading' | 'landing' | 'auth' | 'app';
 
 export default function App() {
+  const { authed, ready, logout, user } = useAuth();
   const [currentView, setCurrentView] = useState('dashboard');
   const [phase, setPhase] = useState<Phase>('loading');
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [booted, setBooted] = useState(false);
   const [live, setLive] = useState(false);
+  const [accountAction, setAccountAction] = useState(() => readAccountAction());
+
+  const clearAccountAction = () => {
+    setAccountAction(null);
+    // Strip the token from the URL so it isn't reused or bookmarked.
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, '', window.location.pathname.replace(/\/(verify-email|reset-password)$/, '/') || '/');
+    }
+    setPhase('auth');
+    setAuthMode('login');
+  };
 
   useEffect(() => {
-    const t = setTimeout(() => setPhase('landing'), 1700);
+    const t = setTimeout(() => setBooted(true), 1700);
     return () => clearTimeout(t);
   }, []);
 
+  // Once the loading screen has played and the session is validated, route to
+  // the dashboard if already signed in, otherwise the landing experience.
   useEffect(() => {
-    // Reset scroll when leaving the landing experience.
+    if (phase === 'loading' && booted && ready) {
+      setPhase(authed ? 'app' : 'landing');
+    }
+  }, [phase, booted, ready, authed]);
+
+  // If the session is lost (logout or a 401), drop back to the landing page.
+  useEffect(() => {
+    if (ready && !authed && phase === 'app') setPhase('landing');
+  }, [ready, authed, phase]);
+
+  useEffect(() => {
+    // Reset scroll when entering the dashboard.
     if (phase === 'app') window.scrollTo({ top: 0 });
   }, [phase]);
+
+  const goAuth = (mode: 'login' | 'signup') => {
+    setAuthMode(mode);
+    setPhase('auth');
+  };
+
+  const handleExplore = () => {
+    if (authed) setPhase('app');
+    else goAuth('login');
+  };
+
+  const handleLogout = () => {
+    logout();
+    setCurrentView('dashboard');
+    setPhase('landing');
+  };
 
   useEffect(() => {
     const ping = async () => {
@@ -80,21 +139,53 @@ export default function App() {
       <Background />
       <CustomCursor />
 
-      <AnimatePresence>{phase === 'loading' && <LoadingScreen key="loader" />}</AnimatePresence>
+      <AnimatePresence>
+        {phase === 'loading' && !accountAction && <LoadingScreen key="loader" />}
+      </AnimatePresence>
+
+      {accountAction && (
+        <AccountActionPage
+          action={accountAction.action}
+          token={accountAction.token}
+          onDone={clearAccountAction}
+        />
+      )}
 
       <AnimatePresence mode="wait">
-        {phase === 'landing' && (
-          <Landing key="landing" onEnter={() => setPhase('app')} />
+        {!accountAction && phase === 'landing' && (
+          <Landing
+            key="landing"
+            onExplore={handleExplore}
+            onLogin={() => goAuth('login')}
+            onSignup={() => goAuth('signup')}
+            authed={authed}
+          />
         )}
 
-        {phase === 'app' && (
+        {!accountAction && phase === 'auth' && (
+          <AuthPage
+            key="auth"
+            initialMode={authMode}
+            onBack={() => setPhase('landing')}
+            onAuthed={() => setPhase('app')}
+          />
+        )}
+
+        {!accountAction && phase === 'app' && (
           <motion.div
             key="app"
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           >
-            <TopNav tabs={TABS} current={currentView} onChange={setCurrentView} live={live} />
+            <TopNav
+              tabs={TABS}
+              current={currentView}
+              onChange={setCurrentView}
+              live={live}
+              user={user}
+              onLogout={handleLogout}
+            />
 
             <main className="relative mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10 pt-28 pb-24 sm:pt-32">
               <AnimatePresence mode="wait">

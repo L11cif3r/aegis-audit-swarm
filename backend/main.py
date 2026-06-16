@@ -6,6 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import sqlalchemy
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -16,33 +17,55 @@ from telemetry import instrument_app
 
 from gateway.auth import Principal, authenticate, require_role
 from gateway.rate_limit import enforce_rate_limit
+from gateway.middleware import SecurityHeadersMiddleware, BodySizeLimitMiddleware
 from gateway import pipeline, review
 from gateway.providers_router import router as providers_router
+from gateway.auth_router import router as auth_router
 
 from agents.librarian import service as librarian
 from agents.librarian.router import router as librarian_router
 from agents.adversary.router import router as adversary_router
 from agents.notary.router import router as notary_router
 from agents.notary import service as notary_service
+import bus
 from ingestion.feed import RegulationFeedIngester
 from gateway import provider_store
+from gateway.retention import RetentionWorker
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 log = logging.getLogger("talamanda")
 
 _ingester = RegulationFeedIngester()
+_retention = RetentionWorker()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    problems = settings.validate_runtime()
+    if problems:
+        msg = "Configuration errors:\n  - " + "\n  - ".join(problems)
+        if settings.is_production:
+            raise RuntimeError(msg)
+        log.warning("%s\n(continuing — development mode)", msg)
+
     await database.connect()
-    create_tables()
+    if settings.auto_migrate:
+        create_tables()
+    else:
+        log.info("AUTO_MIGRATE disabled — assuming Alembic-managed schema.")
     await librarian.seed_controls()
     await provider_store.ensure_seeded()
     notary_service.register_subscribers()
+    await bus.start()
     await _ingester.start()
+    await _retention.start()
     log.info("Trust Layer online (env=%s)", settings.environment)
     yield
+    await bus.stop()
+    await _retention.stop()
     await _ingester.stop()
     await database.disconnect()
 
@@ -61,8 +84,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if settings.security_headers:
+    app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+
 instrument_app(app)
 
+app.include_router(auth_router)
 app.include_router(librarian_router)
 app.include_router(adversary_router)
 app.include_router(notary_router)
@@ -101,32 +129,52 @@ from llm.router import provider_for  # noqa: E402
 _STATS_EXCLUDE_AGENTS = {"__connection_test__"}
 
 
+def _decrypt_rows(rows) -> list[dict]:
+    """Decrypt prompt/response columns when audit content is encrypted at rest."""
+    out = [dict(r) for r in rows]
+    if settings.encrypt_audit_content:
+        from gateway import crypto
+        for d in out:
+            if "prompt" in d:
+                d["prompt"] = crypto.decrypt_text(d.get("prompt"))
+            if "response" in d:
+                d["response"] = crypto.decrypt_text(d.get("response"))
+    return out
+
+
 @app.get("/audit/logs")
-async def get_all_logs(limit: int = 100):
-    q = audit_logs.select().order_by(audit_logs.c.timestamp.desc()).limit(limit)
-    return [dict(r) for r in await database.fetch_all(q)]
+async def get_all_logs(limit: int = 100, principal: Principal = Depends(authenticate)):
+    q = (
+        audit_logs.select()
+        .where(audit_logs.c.tenant == principal.tenant)
+        .order_by(audit_logs.c.timestamp.desc())
+        .limit(limit)
+    )
+    return _decrypt_rows(await database.fetch_all(q))
 
 
 @app.get("/audit/logs/agent/{agent_name}")
-async def get_logs_by_agent(agent_name: str):
+async def get_logs_by_agent(agent_name: str, principal: Principal = Depends(authenticate)):
     q = audit_logs.select().where(
-        audit_logs.c.agent == agent_name
+        (audit_logs.c.agent == agent_name) & (audit_logs.c.tenant == principal.tenant)
     ).order_by(audit_logs.c.timestamp.desc())
-    return [dict(r) for r in await database.fetch_all(q)]
+    return _decrypt_rows(await database.fetch_all(q))
 
 
 @app.get("/audit/logs/status/{status}")
-async def get_logs_by_status(status: str):
+async def get_logs_by_status(status: str, principal: Principal = Depends(authenticate)):
     """Filter by: success | blocked | held | error"""
     q = audit_logs.select().where(
-        audit_logs.c.status == status
+        (audit_logs.c.status == status) & (audit_logs.c.tenant == principal.tenant)
     ).order_by(audit_logs.c.timestamp.desc())
-    return [dict(r) for r in await database.fetch_all(q)]
+    return _decrypt_rows(await database.fetch_all(q))
 
 
 @app.get("/audit/stats")
-async def get_stats():
-    all_rows = await database.fetch_all(audit_logs.select())
+async def get_stats(principal: Principal = Depends(authenticate)):
+    all_rows = await database.fetch_all(
+        audit_logs.select().where(audit_logs.c.tenant == principal.tenant)
+    )
     rows = [
         dict(r) for r in all_rows
         if dict(r).get("agent") not in _STATS_EXCLUDE_AGENTS
@@ -142,6 +190,8 @@ async def get_stats():
         }
 
     def _cost(r):
+        if r.get("cost_usd") is not None:
+            return float(r["cost_usd"])
         try:
             return float((r["cost"] or "$0").replace("$", ""))
         except (ValueError, AttributeError):
@@ -207,11 +257,48 @@ async def get_stats():
 
 
 @app.get("/audit/threats")
-async def get_threats():
+async def get_threats(principal: Principal = Depends(authenticate)):
     q = audit_logs.select().where(
-        audit_logs.c.status == "blocked"
+        (audit_logs.c.status == "blocked") & (audit_logs.c.tenant == principal.tenant)
     ).order_by(audit_logs.c.timestamp.desc())
-    return [dict(r) for r in await database.fetch_all(q)]
+    return _decrypt_rows(await database.fetch_all(q))
+
+
+@app.get("/audit/verify")
+async def verify_audit_log(principal: Principal = Depends(authenticate)):
+    """Verify the tamper-evident hash chain + signatures for this tenant's audit log."""
+    from gateway import audit_integrity
+    return await audit_integrity.verify_chain(principal.tenant)
+
+
+# ── Cost & budgets ────────────────────────────────────────────────────────────
+class BudgetBody(BaseModel):
+    daily_limit_usd: float | None = None
+    monthly_limit_usd: float | None = None
+
+
+@app.get("/cost/summary")
+async def cost_summary(principal: Principal = Depends(authenticate)):
+    """Current-day and current-month spend vs budget for this tenant."""
+    from gateway import budgets
+    return await budgets.summary(principal.tenant)
+
+
+@app.get("/cost/budget")
+async def get_cost_budget(principal: Principal = Depends(authenticate)):
+    from gateway import budgets
+    return await budgets.get_budget(principal.tenant)
+
+
+@app.post("/cost/budget")
+async def set_cost_budget(
+    body: BudgetBody,
+    principal: Principal = Depends(require_role("operator")),
+):
+    from gateway import budgets
+    return await budgets.set_budget(
+        principal.tenant, body.daily_limit_usd, body.monthly_limit_usd
+    )
 
 
 # ── Review queue (human-in-the-loop) ──────────────────────────────────────────
@@ -221,8 +308,8 @@ class ReviewDecision(BaseModel):
 
 
 @app.get("/review/pending")
-async def review_pending(limit: int = 100):
-    return await review.list_pending(limit)
+async def review_pending(limit: int = 100, principal: Principal = Depends(authenticate)):
+    return await review.list_pending(principal.tenant, limit)
 
 
 @app.post("/review/{review_id}")
@@ -232,8 +319,10 @@ async def review_resolve(
     principal: Principal = Depends(require_role("operator")),
 ):
     ok = await review.resolve(
-        review_id, body.decision, principal.subject if body.reviewer == "operator" else body.reviewer,
+        review_id, body.decision,
+        principal.subject if body.reviewer == "operator" else body.reviewer,
         datetime.now(timezone.utc).isoformat(),
+        principal.tenant,
     )
     return {"ok": ok, "review_id": review_id, "decision": body.decision}
 
@@ -241,3 +330,18 @@ async def review_resolve(
 @app.get("/health")
 async def health():
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/ready")
+async def ready():
+    """Readiness probe — verifies DB connectivity for load balancers/k8s."""
+    try:
+        await database.fetch_one(sqlalchemy.select(sqlalchemy.literal(1)))
+        return {"status": "ready"}
+    except Exception as exc:  # noqa: BLE001
+        from fastapi import Response
+        import json
+        return Response(
+            content=json.dumps({"status": "not_ready", "error": str(exc)}),
+            status_code=503, media_type="application/json",
+        )

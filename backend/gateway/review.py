@@ -27,22 +27,25 @@ async def enqueue(entry: dict) -> None:
     await database.execute(review_queue.insert().values(**entry))
 
 
-async def list_pending(limit: int = 100) -> list[dict]:
+async def list_pending(tenant: str, limit: int = 100) -> list[dict]:
     q = (
         review_queue.select()
-        .where(review_queue.c.status == "pending")
+        .where(
+            (review_queue.c.status == "pending") & (review_queue.c.tenant == tenant)
+        )
         .order_by(review_queue.c.risk_score.desc())
         .limit(limit)
     )
     return [dict(r) for r in await database.fetch_all(q)]
 
 
-async def resolve(review_id: str, decision: str, reviewer: str, resolved_at: str) -> bool:
+async def resolve(review_id: str, decision: str, reviewer: str, resolved_at: str,
+                  tenant: str) -> bool:
     if decision not in ("approved", "rejected"):
         return False
     q = (
         review_queue.update()
-        .where(review_queue.c.id == review_id)
+        .where((review_queue.c.id == review_id) & (review_queue.c.tenant == tenant))
         .values(status=decision, reviewer=reviewer, resolved_at=resolved_at)
     )
     result = await database.execute(q)

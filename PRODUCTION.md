@@ -8,6 +8,116 @@ ordered by priority within each phase.
 
 ---
 
+## 🔐 Hardening shipped in this release ✅
+
+Security & robustness work completed (see `backend/config.py` for all knobs):
+
+- ✅ **Fail-fast config validation** — in `ENVIRONMENT=production` the gateway
+  refuses to boot without `JWT_SECRET`, `ENCRYPTION_KEY`, `NOTARY_PRIVATE_KEY_PEM`,
+  an explicit (non-`*`) `CORS_ORIGINS`, and `AUTO_MIGRATE=false`.
+- ✅ **Real server-side logout** — JWTs carry a `jti`; logout records it in a
+  `revoked_tokens` table and `authenticate` rejects revoked tokens. Hourly purge
+  of expired entries.
+- ✅ **Auth safety** — password strength rules (length + letters & digits) and
+  per-account login brute-force lockout (`LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES`).
+- ✅ **Distributed rate limiting** — Redis backend (`REDIS_URL`) with automatic
+  in-process fallback, so multiple gateway workers/replicas share limits.
+- ✅ **Request & LLM guards** — request body size cap, max prompt length, hard
+  output-token cap, and provider call timeouts (SDK + asyncio backstop).
+- ✅ **Security headers + HSTS** middleware on every response.
+- ✅ **Audit data governance** — optional prompt/response encryption at rest
+  (`ENCRYPT_AUDIT_CONTENT`) and retention purge (`AUDIT_RETENTION_DAYS`).
+- ✅ **Telemetry without spam** — OpenTelemetry is opt-in via `OTEL_EXPORTER`
+  (`none` default, `console`, or `otlp`); no more console span dumps.
+- ✅ **Readiness probe** `/ready` (DB check) alongside `/health`; structured logs.
+- ✅ **Alembic migrations** — linear chain (`0001_initial` → `0002_multitenant_auth`
+  → `0003_account_recovery`); production runs `alembic upgrade head` on boot.
+- ✅ **Production compose + TLS** — `docker-compose.prod.yml` adds Redis and an
+  nginx TLS-terminating proxy (`deploy/nginx-tls.conf`).
+
+### Phase 1 blockers — addressed (third pass) ✅
+
+- ✅ **Signing-key lifecycle** — pluggable signer (`NOTARY_KEY_BACKEND`,
+  KMS-ready), **key rotation** with a fingerprint **`key_id` recorded on every
+  evidence-ledger and audit-log row**, and a verify registry of active + retired
+  public keys (`NOTARY_VERIFY_KEYS`) so old evidence still verifies after
+  rotation. Production still refuses to boot on an ephemeral key.
+- ✅ **Durable, scalable event bus** — `bus.py` now uses **Redis Streams** with a
+  consumer group when `REDIS_URL` is set (in-process fallback otherwise), so the
+  gateway can run multiple replicas. Ledger append + the notary subscriber are
+  **idempotent** (dedupe by tenant+request+event) against redelivery.
+- ✅ **Persistent vector store** — pgvector backend (`VECTOR_BACKEND=pgvector`)
+  with **real embeddings** (`embeddings.py`: OpenAI when configured, deterministic
+  local feature-hashing fallback). Survives restarts; graceful fallback to
+  in-memory if the extension/driver is unavailable.
+- ✅ **Real security scanning (layered)** — regex pre-screen **+** a second-layer
+  injection/jailbreak classifier (`SECURITY_LLM_SCAN` LLM mode, heuristic
+  fallback) **+ output-side scanning** that redacts leaked secrets/PII/unsafe
+  content from model responses (`SECURITY_SCAN_OUTPUTS`).
+
+> Still open from Phase 1: true KMS/HSM signer wiring (extension point only),
+> threat-feed signature ingestion, and ANN indexes/embedding-model tuning for
+> pgvector at very large scale.
+
+### Cost engine & budgets ✅
+
+- ✅ **Usage-accurate cost** — captures the real billing dimensions from each
+  provider's usage object: standard input, **cached input tokens** (priced at a
+  lower rate, `CACHED_INPUT_RATIO` / per-model override), **reasoning tokens**,
+  and output. Replaces the flat `input·price + output·price`.
+- ✅ **Confidence flag** — every cost is marked **exact** (provider usage + known
+  price) or **estimated** (unknown model price or tokenizer-estimated usage when
+  a provider returns no usage), persisted as `audit_logs.cost_estimated`.
+- ✅ **Structured spend** — `audit_logs.cost_usd` + token-breakdown columns make
+  spend aggregation reliable instead of parsing a display string.
+- ✅ **Per-tenant budgets** — `tenant_budgets` table with daily/monthly caps
+  (`/cost/budget`), live spend rollups (`/cost/summary`), threshold alerts at
+  `BUDGET_ALERT_FRACTION`, and **pre-request enforcement** (a call that would
+  exceed the cap is blocked as `BUDGET_EXCEEDED`). Surfaced in the Cost & Billing
+  dashboard tab.
+
+### Account, session & supply-chain hardening (second pass) ✅
+
+- ✅ **Account recovery** — email verification, password change (invalidates all
+  sessions), and forgot/reset-password flows. Pluggable email sender
+  (`SMTP_*`) with a console fallback for dev (`gateway/email.py`).
+- ✅ **XSS/token hardening** — short-lived access tokens (`ACCESS_TOKEN_MINUTES`)
+  + rotating, DB-backed, single-use refresh tokens (`gateway/refresh.py`);
+  the frontend auto-refreshes on 401 (single-flight). Password change/reset
+  revokes all refresh tokens.
+- ✅ **Content-Security-Policy** + frame/referrer headers on the SPA (nginx),
+  defense-in-depth against token theft via XSS.
+- ✅ **Tamper-evident audit log** — every `audit_logs` row is hashed into a
+  per-tenant chain and RSA-signed; `GET /audit/verify` recomputes hashes +
+  signatures and reports the first break (`gateway/audit_integrity.py`).
+- ✅ **Supply-chain CI** — GitHub Actions (`.github/workflows/ci.yml`) runs
+  backend tests, frontend build, `pip-audit`, `npm audit`, Trivy
+  vuln/secret/misconfig scan, and emits a CycloneDX SBOM. Dependabot
+  (`.github/dependabot.yml`) keeps pip/npm/Docker/Actions deps current.
+
+### Deploy (production)
+
+```bash
+cp .env.example .env          # fill in POSTGRES_PASSWORD, JWT_SECRET,
+                              # ENCRYPTION_KEY, NOTARY_PRIVATE_KEY_PEM, CORS_ORIGINS
+# generate secrets:
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # JWT_SECRET / ENCRYPTION_KEY
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048    # NOTARY_PRIVATE_KEY_PEM
+
+# TLS certs into deploy/certs/ (fullchain.pem + privkey.pem) — certbot or org CA.
+
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+Migrations run automatically on gateway boot. To manage schema manually:
+
+```bash
+cd backend && alembic upgrade head        # fresh DB
+cd backend && alembic stamp head          # existing DB already built by dev sync
+```
+
+---
+
 ## Phase 0 — Already in place ✅
 - ✅ End-to-end trust pipeline (scan → librarian → adversary → risk gate → notary → audit log)
 - ✅ Env-driven config, no hardcoded secrets, SSL-required DB by default

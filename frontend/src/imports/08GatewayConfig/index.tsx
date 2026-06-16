@@ -14,6 +14,79 @@ import {
   PageHeader, Panel, SectionTitle, Badge, EmptyState, Bento,
 } from '../../app/components/shell/primitives';
 import Reveal from '../../app/components/shell/Reveal';
+import { useAuth } from '../../lib/auth';
+import { Copy, Check, KeyRound as KeyRoundIcon, RefreshCw } from 'lucide-react';
+
+function IngressKeyPanel() {
+  const { user, rotateApiKey } = useAuth();
+  const [copied, setCopied] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const key = user?.ingress_api_key || '';
+
+  if (!user?.email) return null; // dev/API-key principals have no account
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  const rotate = async () => {
+    if (!confirm('Rotate your ingress key? Agents using the old key will stop working.')) return;
+    setRotating(true);
+    try {
+      await rotateApiKey();
+    } finally {
+      setRotating(false);
+    }
+  };
+
+  return (
+    <Reveal delay={0.02}>
+      <Panel className="flex flex-col gap-4">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-9 place-items-center rounded-xl bg-brand/10 text-brand">
+            <KeyRoundIcon size={17} />
+          </span>
+          <div>
+            <h2 className="text-[15px] font-semibold text-ink">Your Ingress API Key</h2>
+            <p className="text-[11px] text-soft">
+              Your agents send this as <code className="text-ink">X-API-Key</code> to route requests through Aegis.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <code className="flex-1 truncate rounded-xl border border-hairline bg-surface2/60 px-3 py-2.5 text-[12px] text-ink">
+            {key || '—'}
+          </code>
+          <div className="flex gap-2">
+            <button
+              onClick={copy}
+              data-cursor="hover"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-hairline px-3.5 py-2.5 text-[12px] font-medium text-soft hover:text-ink transition-colors"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              onClick={rotate}
+              disabled={rotating}
+              data-cursor="hover"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-hairline px-3.5 py-2.5 text-[12px] font-medium text-soft hover:text-ink transition-colors disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={rotating ? 'animate-spin' : ''} />
+              Rotate
+            </button>
+          </div>
+        </div>
+      </Panel>
+    </Reveal>
+  );
+}
 
 const SELECT_CLS =
   'w-full appearance-none rounded-xl border border-hairline bg-surface2/60 py-2.5 pl-3 pr-9 text-[12px] text-ink outline-none focus:border-brand/50';
@@ -276,6 +349,8 @@ export default function Component08GatewayConfig() {
         title="One panel. Every provider."
         subtitle="Select a provider, choose a model, configure credentials, and test — including custom OpenAI-compatible endpoints."
       />
+
+      <IngressKeyPanel />
 
       <Reveal delay={0.05}>
         <Panel className="flex flex-col gap-6">

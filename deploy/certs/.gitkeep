@@ -1,0 +1,9 @@
+# Place TLS certs here for the production proxy:
+#   fullchain.pem  (cert + intermediate chain)
+#   privkey.pem    (private key)
+#
+# Quick self-signed cert for staging/testing (NOT for real production):
+#   openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+#     -keyout privkey.pem -out fullchain.pem -subj "/CN=localhost"
+#
+# For real certs use certbot (Let's Encrypt) or your org CA.

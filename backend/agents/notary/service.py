@@ -16,10 +16,15 @@ def _now() -> str:
 
 
 async def _on_adversary_findings(summary: dict) -> None:
-    """Persist streamed Adversary findings to the immutable ledger."""
+    """Persist streamed Adversary findings to the immutable ledger (idempotent)."""
+    tenant = summary.get("tenant", "default")
+    request_id = summary.get("request_id", "unknown")
+    # Guard against duplicate delivery (e.g. Redis Streams redelivery).
+    if await ledger.exists(tenant, request_id, "adversary.findings"):
+        return
     await ledger.append(
         event_type="adversary.findings",
-        request_id=summary.get("request_id", "unknown"),
+        request_id=request_id,
         payload={
             "tests_run": summary.get("tests_run"),
             "failed": summary.get("failed"),
@@ -27,6 +32,7 @@ async def _on_adversary_findings(summary: dict) -> None:
             "pass_rate": summary.get("pass_rate"),
             "max_severity": summary.get("max_severity"),
         },
+        tenant=tenant,
     )
 
 
@@ -34,15 +40,19 @@ def register_subscribers() -> None:
     subscribe(TOPIC_ADVERSARY_FINDINGS, _on_adversary_findings)
 
 
-async def trust_score() -> dict:
+async def trust_score(tenant: str = "default") -> dict:
     """Composite Trust Score (0-100) for real-time safety queries."""
-    rows = [dict(r) for r in await database.fetch_all(audit_logs.select())]
+    rows = [
+        dict(r) for r in await database.fetch_all(
+            audit_logs.select().where(audit_logs.c.tenant == tenant)
+        )
+    ]
     total = len(rows)
     blocked = sum(1 for r in rows if r["status"] == "blocked")
     held = sum(1 for r in rows if (r.get("gate_decision") == "hold"))
 
-    adv = await coverage_stats()
-    chain = await ledger.verify_chain()
+    adv = await coverage_stats(tenant)
+    chain = await ledger.verify_chain(tenant)
     lib = await coverage_summary()
 
     # Weighted blend: adversarial pass rate, gate cleanliness, chain integrity.
@@ -82,7 +92,7 @@ async def trust_score() -> dict:
 
 async def safety_certificate(tenant: str = "default") -> dict:
     """Issue a signed, human-readable Safety Certificate (PDF 3, Notary)."""
-    score = await trust_score()
+    score = await trust_score(tenant)
     body = {
         "certificate_type": "Talamanda Safety Certificate",
         "tenant": tenant,
@@ -103,7 +113,7 @@ async def safety_certificate(tenant: str = "default") -> dict:
     )
     signature = signing.sign(digest)
     # Anchor the certificate in the evidence ledger.
-    await ledger.append("certificate.issued", f"cert_{tenant}", body)
+    await ledger.append("certificate.issued", f"cert_{tenant}", body, tenant=tenant)
     return {
         **body,
         "digest": digest,

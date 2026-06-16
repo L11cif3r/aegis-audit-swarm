@@ -16,10 +16,10 @@ async def build_audit_package(tenant: str = "default") -> dict:
     from agents.librarian import service as librarian
     from agents.adversary import store as adversary_store
 
-    trust = await notary.trust_score()
+    trust = await notary.trust_score(tenant)
     coverage = await librarian.coverage_summary()
-    adv = await adversary_store.coverage_stats()
-    recent_findings = await adversary_store.recent(limit=25)
+    adv = await adversary_store.coverage_stats(tenant)
+    recent_findings = await adversary_store.recent(tenant, limit=25)
     return {
         "tenant": tenant,
         "trust": trust,
