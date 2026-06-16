@@ -259,7 +259,7 @@ export default function Component08GatewayConfig() {
     }
   }, [form.model, selectedProviderId, catalog, savedConfig, isCustomNew, editPricing]);
 
-  const patchForm = (patch: Partial<FormState>) => setForm((f) => ({ ...f, patch }));
+  const patchForm = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
   const saveConfig = async () => {
     setSaving(true);
