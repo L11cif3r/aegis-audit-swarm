@@ -38,6 +38,7 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       NOTARY_PRIVATE_KEY_PEM: ${NOTARY_PRIVATE_KEY_PEM:-}
       RISK_HOLD_THRESHOLD: ${RISK_HOLD_THRESHOLD:-0.6}
+      ROOT_PATH: /api
     depends_on:
       db:
         condition: service_healthy

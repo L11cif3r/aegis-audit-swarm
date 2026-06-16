@@ -70,5 +70,6 @@ def create_tables() -> None:
     import agents.notary.ledger        # noqa: F401
     import gateway.review              # noqa: F401
     import agents.adversary.store      # noqa: F401
+    import gateway.provider_store      # noqa: F401
 
     metadata.create_all(_sync_engine())

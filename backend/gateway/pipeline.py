@@ -19,7 +19,8 @@ from bus import TOPIC_GATE_DECISION, publish
 from alerting import send_alert
 
 from llm import call_model_real, calculate_cost
-from llm.router import select_model
+from llm.router import select_model, provider_for
+from gateway import provider_store
 from scoring import risk
 
 from .security import security_scan
@@ -55,7 +56,13 @@ async def _write_log(entry: dict) -> None:
 
 
 async def process_request(
-    *, agent: str, model: str | None, prompt: str, task: str | None, tenant: str
+    *,
+    agent: str,
+    model: str | None,
+    prompt: str,
+    task: str | None,
+    tenant: str,
+    max_tokens: int | None = None,
 ) -> dict:
     req_id = f"req_{uuid.uuid4().hex[:6]}"
     timestamp = _now()
@@ -132,8 +139,20 @@ async def process_request(
         return {**entry, "reasons": assessment.reasons, "signals": assessment.signals}
 
     # Released: invoke the model.
+    tok_limit = max_tokens if max_tokens is not None else 1024
+    prov = provider_for(resolved_model)
+    if not provider_store.is_provider_enabled(prov):
+        entry = {**base_entry, "prompt": prompt,
+                 "response": f"Error: Provider '{prov}' is disabled",
+                 "status": "error", "risk_score": assessment.score,
+                 "gate_decision": "release"}
+        await _write_log(entry)
+        return {**entry, "reasons": assessment.reasons, "signals": assessment.signals}
+
     try:
-        resp_text, in_tok, out_tok = await call_model_real(resolved_model, prompt)
+        resp_text, in_tok, out_tok = await call_model_real(
+            resolved_model, prompt, max_tokens=tok_limit
+        )
         cost = calculate_cost(resolved_model, in_tok, out_tok)
         entry = {**base_entry, "prompt": prompt, "response": resp_text,
                  "input_tokens": in_tok, "output_tokens": out_tok,

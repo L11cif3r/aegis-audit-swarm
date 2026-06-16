@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Activity, ShieldAlert, Users, AudioLines, Wallet, BadgeCheck, FileLock2,
+  Activity, ShieldAlert, Users, AudioLines, Wallet, BadgeCheck, FileLock2, Server,
 } from 'lucide-react';
 
 import Background from './components/shell/Background';
@@ -18,10 +18,12 @@ import Component04VoiceAgent from '../imports/04VoiceAgent';
 import Component05CostBilling from '../imports/05CostBilling';
 import Component06Compliance from '../imports/06Compliance';
 import Component07Evidence from '../imports/07Evidence';
+import Component08GatewayConfig from '../imports/08GatewayConfig';
 
 const TABS: TabDef[] = [
   { id: 'dashboard', label: 'Overview', icon: Activity },
   { id: 'security', label: 'Security', icon: ShieldAlert },
+  { id: 'gateway', label: 'Gateway', icon: Server },
   { id: 'leads', label: 'Leads', icon: Users },
   { id: 'voice', label: 'Voice', icon: AudioLines },
   { id: 'billing', label: 'Billing', icon: Wallet },
@@ -37,6 +39,7 @@ const VIEWS: Record<string, React.ComponentType> = {
   billing: Component05CostBilling,
   compliance: Component06Compliance,
   evidence: Component07Evidence,
+  gateway: Component08GatewayConfig,
 };
 
 type Phase = 'loading' | 'landing' | 'app';

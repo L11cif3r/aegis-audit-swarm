@@ -29,6 +29,64 @@ export async function apiPost<T = any>(path: string, body: unknown): Promise<T> 
   return res.json();
 }
 
+export type ModelPrice = {
+  input_price_per_m: number;
+  output_price_per_m: number;
+};
+
+export type ProviderConfig = {
+  provider: string;
+  display_name: string;
+  kind: "builtin" | "custom";
+  default_model: string;
+  base_url: string;
+  chat_endpoint?: string;
+  input_price: number;
+  output_price: number;
+  input_price_per_m: number;
+  output_price_per_m: number;
+  enabled: boolean;
+  api_key_set: boolean;
+  api_key_masked: string | null;
+  api_key_source: string;
+  models: string[];
+  model_prices?: Record<string, ModelPrice>;
+};
+
+export type CatalogModel = {
+  id: string;
+  input_price_per_m: number;
+  output_price_per_m: number;
+};
+
+export type CatalogEntry = {
+  id: string;
+  label: string;
+  default_model: string;
+  models: CatalogModel[];
+};
+
+export type ProviderCatalog = Record<string, CatalogEntry>;
+
+export type ProviderTestResult = {
+  ok: boolean;
+  provider: string;
+  model?: string;
+  latency_ms?: number;
+  message?: string;
+  error?: string;
+  response?: string;
+};
+
+export type ProxyRequestBody = {
+  agent: string;
+  prompt: string;
+  model?: string;
+  task?: string;
+  max_tokens?: number;
+  metadata?: Record<string, unknown>;
+};
+
 // Convenience typed endpoints.
 export const api = {
   logs: (limit = 100) => apiGet(`/audit/logs?limit=${limit}`),
@@ -46,4 +104,11 @@ export const api = {
   reviewPending: () => apiGet(`/review/pending`),
   resolveReview: (id: string, decision: "approved" | "rejected") =>
     apiPost(`/review/${id}`, { decision }),
+  providers: () => apiGet<ProviderConfig[]>(`/gateway/providers`),
+  catalog: () => apiGet<ProviderCatalog>(`/gateway/catalog`),
+  updateProvider: (id: string, body: Record<string, unknown>) =>
+    apiPost<ProviderConfig>(`/gateway/providers/${id}`, body),
+  testProvider: (id: string, model?: string) =>
+    apiPost<ProviderTestResult>(`/gateway/providers/${id}/test`, model ? { model } : {}),
+  proxyRequest: (body: ProxyRequestBody) => apiPost(`/agent/request`, body),
 };

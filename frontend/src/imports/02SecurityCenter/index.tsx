@@ -1,30 +1,34 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ShieldAlert, KeyRound, ScanLine, Fingerprint } from 'lucide-react';
 import { api } from '../../lib/api';
 import { PageHeader, Stat, Panel, SectionTitle, Badge, EmptyState, Bento, FeedRow } from '../../app/components/shell/primitives';
 import Reveal from '../../app/components/shell/Reveal';
 
 export default function Component02SecurityCenter() {
-  const [logs, setLogs] = useState<any[]>([]);
+  const [threats, setThreats] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
-    const fetchLogs = async () => {
+    const fetchAll = async () => {
       try {
-        setLogs(await api.logs());
+        const [t, s] = await Promise.all([api.threats(), api.stats()]);
+        setThreats(t);
+        setStats(s);
       } catch {
         /* offline */
       }
     };
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 2000);
+    fetchAll();
+    const interval = setInterval(fetchAll, 2000);
     return () => clearInterval(interval);
   }, []);
 
-  const blockedLogs = logs.filter((l) => l.status === 'blocked');
-  const totalBlocked = blockedLogs.length;
-  const injections = blockedLogs.filter((l) => /injection/i.test(l.threat_type || '') || /ignore/i.test(l.prompt || '')).length;
-  const secrets = blockedLogs.filter((l) => /secret/i.test(l.threat_type || '') || (l.prompt || '').includes('sk-')).length;
-  const pii = blockedLogs.filter((l) => /pii/i.test(l.threat_type || '')).length;
+  const sec = stats?.security;
+  const totalBlocked = sec?.blocked ?? threats.length;
+  const injections = sec?.injections ?? threats.filter((l) => /injection/i.test(l.threat_type || '')).length;
+  const secrets = sec?.secrets ?? threats.filter((l) => /secret/i.test(l.threat_type || '')).length;
+  const held = sec?.held ?? stats?.total_held ?? 0;
+  const pii = threats.filter((l) => /pii/i.test(l.threat_type || '')).length;
 
   const policies = [
     { name: 'Prompt Injection', desc: 'Jailbreaks, DAN, role-play', action: 'BLOCK', tone: 'warn' as const },
@@ -41,8 +45,9 @@ export default function Component02SecurityCenter() {
       />
 
       <Reveal delay={0.05}>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-5">
           <Stat label="Blocked" count={totalBlocked} icon={ShieldAlert} tone="bad" sub="Total mitigated" />
+          <Stat label="Held" count={held} icon={ShieldAlert} tone="warn" sub="Awaiting review" />
           <Stat label="Injections" count={injections} icon={ScanLine} tone="warn" sub="Jailbreak patterns" />
           <Stat label="Secrets" count={secrets} icon={KeyRound} tone="brand" sub="Keys redacted" />
           <Stat label="PII Cleaned" count={pii} icon={Fingerprint} tone="ok" sub="Identifiers" />
@@ -74,10 +79,10 @@ export default function Component02SecurityCenter() {
               <span className="size-1.5 rounded-full bg-bad animate-ping" />
             </div>
             <div className="grid sm:grid-cols-2 gap-2.5 mt-4">
-              {blockedLogs.length === 0 ? (
+              {threats.length === 0 ? (
                 <div className="sm:col-span-2"><EmptyState>No active threats detected.</EmptyState></div>
               ) : (
-                blockedLogs.slice(0, 8).map((log, i) => (
+                threats.slice(0, 8).map((log, i) => (
                   <FeedRow
                     key={log.id || i}
                     i={i}

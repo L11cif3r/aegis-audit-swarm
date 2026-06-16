@@ -15,23 +15,26 @@ function statusTone(status: string) {
 
 export default function Component01DashboardOverview() {
   const [logs, setLogs] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
-    const fetchLogs = async () => {
+    const fetchAll = async () => {
       try {
-        setLogs(await api.logs());
+        const [l, s] = await Promise.all([api.logs(), api.stats()]);
+        setLogs(l);
+        setStats(s);
       } catch {
         /* offline */
       }
     };
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 2000);
+    fetchAll();
+    const interval = setInterval(fetchAll, 2000);
     return () => clearInterval(interval);
   }, []);
 
-  const totalRequests = logs.length;
-  const blockedRequests = logs.filter((l) => l.status === 'blocked' || l.status === 'held').length;
-  const totalCost = logs.reduce((acc, log) => acc + (parseFloat((log.cost || '$0').replace('$', '')) || 0), 0);
+  const totalRequests = stats?.total_requests ?? logs.length;
+  const blockedRequests = (stats?.total_blocked ?? 0) + (stats?.total_held ?? 0);
+  const totalCost = stats?.total_cost_usd ?? 0;
   const activeAgents = totalRequests > 0 ? [...new Set(logs.map((l) => l.agent))].length : 0;
 
   const series = [...logs]

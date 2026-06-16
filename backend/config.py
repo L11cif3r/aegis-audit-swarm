@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # ── Core ──────────────────────────────────────────────────────────────────
     app_name: str = "Talamanda AI Trust Layer"
     environment: str = Field(default="development")  # development | staging | production
+    # Public URL prefix when behind a reverse proxy (e.g. nginx /api → gateway).
+    # Empty for direct uvicorn access at :8000.
+    root_path: str = Field(default="")
 
     # ── Database ──────────────────────────────────────────────────────────────
     database_url: str = Field(

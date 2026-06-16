@@ -16,7 +16,7 @@ def test_task_routing_voice_to_gemini():
 def test_unknown_model_falls_back_to_provider_default():
     c = resolve_model("claude-9000-ultra")
     assert c.provider == "anthropic"
-    assert c.model == "claude-3-5-sonnet-20241022"
+    assert c.model == "claude-sonnet-4-6"
 
 
 def test_cost_calculation():
