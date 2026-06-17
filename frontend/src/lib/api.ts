@@ -201,6 +201,9 @@ export const api = {
   refreshModels: (id: string) =>
     apiPost<{ provider: string; count: number; models: string[]; config: ProviderConfig }>(
       `/gateway/providers/${id}/models/refresh`, {}),
+  syncPricing: () =>
+    apiPost<{ ok: boolean; last_synced: number | null; source: string | null; models: number }>(
+      `/gateway/pricing/sync`, {}),
   testProvider: (id: string, model?: string) =>
     apiPost<ProviderTestResult>(`/gateway/providers/${id}/test`, model ? { model } : {}),
   proxyRequest: (body: ProxyRequestBody) => apiPost(`/agent/request`, body),

@@ -179,6 +179,7 @@ export default function Component08GatewayConfig() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [syncingPrices, setSyncingPrices] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -341,6 +342,21 @@ export default function Component08GatewayConfig() {
       setRefreshNote(e?.message || 'Could not refresh models');
     } finally {
       setRefreshing(false);
+      setTimeout(() => setRefreshNote(null), 4000);
+    }
+  };
+
+  const syncPricing = async () => {
+    setSyncingPrices(true);
+    setRefreshNote(null);
+    try {
+      const res = await api.syncPricing();
+      setRefreshNote(`Synced pricing for ${res.models} models from the live catalog.`);
+      await load();
+    } catch (e: any) {
+      setRefreshNote(e?.message || 'Pricing sync failed');
+    } finally {
+      setSyncingPrices(false);
       setTimeout(() => setRefreshNote(null), 4000);
     }
   };
@@ -538,16 +554,28 @@ export default function Component08GatewayConfig() {
           <div className="rounded-xl border border-hairline bg-surface2/20 p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-soft">Model Pricing</span>
-              {!isCustomNew && (
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setEditPricing((v) => !v)}
-                  className="flex items-center gap-1 text-[10px] font-semibold text-brand hover:text-brand/80 transition-colors"
+                  onClick={syncPricing}
+                  disabled={syncingPrices}
+                  title="Pull the latest model prices from the maintained catalog (LiteLLM)"
+                  className="flex items-center gap-1 text-[10px] font-semibold text-brand hover:text-brand/80 transition-colors disabled:opacity-40"
                 >
-                  <Pencil size={11} />
-                  {editPricing ? 'Lock Pricing' : 'Edit Pricing'}
+                  <RotateCw size={11} className={syncingPrices ? 'animate-spin' : ''} />
+                  {syncingPrices ? 'Syncing…' : 'Sync latest'}
                 </button>
-              )}
+                {!isCustomNew && (
+                  <button
+                    type="button"
+                    onClick={() => setEditPricing((v) => !v)}
+                    className="flex items-center gap-1 text-[10px] font-semibold text-brand hover:text-brand/80 transition-colors"
+                  >
+                    <Pencil size={11} />
+                    {editPricing ? 'Lock Pricing' : 'Edit Pricing'}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1.5">

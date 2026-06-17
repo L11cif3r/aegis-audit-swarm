@@ -37,6 +37,24 @@ async def get_catalog():
     return provider_store.get_catalog()
 
 
+@router.get("/pricing/status")
+async def pricing_status(principal: Principal = Depends(authenticate)):
+    from llm import pricing_sync
+
+    return pricing_sync.status()
+
+
+@router.post("/pricing/sync")
+async def pricing_sync_now(principal: Principal = Depends(require_role("operator"))):
+    """Force a refresh of model pricing + catalog from the maintained dataset."""
+    from llm import pricing_sync
+
+    try:
+        return await pricing_sync.refresh(force=True)
+    except Exception as exc:  # noqa: BLE001 - surface transport errors cleanly
+        raise HTTPException(status_code=502, detail=f"Pricing sync failed: {exc}")
+
+
 @router.get("/providers")
 async def list_providers(principal: Principal = Depends(authenticate)):
     return await provider_store.list_providers(principal.tenant)

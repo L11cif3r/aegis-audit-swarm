@@ -63,8 +63,12 @@ async def lifespan(app: FastAPI):
     await bus.start()
     await _ingester.start()
     await _retention.start()
+    from llm import pricing_sync
+    await pricing_sync.start()
     log.info("Trust Layer online (env=%s)", settings.environment)
     yield
+    from llm import pricing_sync as _ps
+    await _ps.stop()
     await bus.stop()
     await _retention.stop()
     await _ingester.stop()

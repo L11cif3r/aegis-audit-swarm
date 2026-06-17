@@ -10,6 +10,7 @@
 # Python Backend
 backend/venv/
 backend/__pycache__/
+backend/llm/_pricing_cache.json
 *.pyc
 *.pyo
 *.pyd

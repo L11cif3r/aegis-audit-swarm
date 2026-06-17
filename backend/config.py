@@ -111,6 +111,15 @@ class Settings(BaseSettings):
     # separate from per-tenant provider keys configured in the Gateway UI.
     owner_anthropic_api_key: Optional[str] = None
 
+    # ── Model pricing/catalog sync (LiteLLM maintained dataset) ───────────────
+    # Keeps model pricing + the catalog current without code changes. Pulls a
+    # community-maintained JSON on boot and on a schedule. Deterministic — no LLM.
+    pricing_sync_enabled: bool = Field(default=True)
+    pricing_sync_url: str = Field(
+        default="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+    )
+    pricing_sync_interval_hours: float = Field(default=24.0)
+
     # ── Risk gate ─────────────────────────────────────────────────────────────
     risk_hold_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
