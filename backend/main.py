@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import sqlalchemy
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -21,6 +21,7 @@ from gateway.middleware import SecurityHeadersMiddleware, BodySizeLimitMiddlewar
 from gateway import pipeline, review
 from gateway.providers_router import router as providers_router
 from gateway.auth_router import router as auth_router
+from gateway.openai_compat import router as openai_compat_router
 
 from agents.librarian import service as librarian
 from agents.librarian.router import router as librarian_router
@@ -76,10 +77,14 @@ app = FastAPI(
     root_path=settings.root_path or "",
 )
 
+_cors_origins = settings.cors_origin_list
+# Browsers forbid wildcard origin together with credentials; only enable
+# credentials when an explicit allow-list is configured.
+_cors_credentials = _cors_origins != ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -95,6 +100,7 @@ app.include_router(librarian_router)
 app.include_router(adversary_router)
 app.include_router(notary_router)
 app.include_router(providers_router)
+app.include_router(openai_compat_router)
 
 
 # ── Request model ─────────────────────────────────────────────────────────────
@@ -269,6 +275,54 @@ async def verify_audit_log(principal: Principal = Depends(authenticate)):
     """Verify the tamper-evident hash chain + signatures for this tenant's audit log."""
     from gateway import audit_integrity
     return await audit_integrity.verify_chain(principal.tenant)
+
+
+# ── AI Security Analyst (Claude-powered) ──────────────────────────────────────
+class ExplainBody(BaseModel):
+    id: str
+
+
+@app.get("/analyst/summary")
+async def analyst_summary(
+    request: Request,
+    limit: int = 60,
+    principal: Principal = Depends(authenticate),
+):
+    await enforce_rate_limit(request)
+    from gateway import analyst
+    rows = await database.fetch_all(
+        audit_logs.select()
+        .where(audit_logs.c.tenant == principal.tenant)
+        .order_by(audit_logs.c.timestamp.desc())
+        .limit(max(1, min(limit, 100)))
+    )
+    try:
+        return await analyst.summarize(principal.tenant, _decrypt_rows(rows))
+    except Exception as exc:  # noqa: BLE001 - surface provider/config issues cleanly
+        raise HTTPException(status_code=503,
+                            detail=f"AI analysis unavailable: {exc}")
+
+
+@app.post("/analyst/explain")
+async def analyst_explain(
+    body: ExplainBody,
+    request: Request,
+    principal: Principal = Depends(authenticate),
+):
+    await enforce_rate_limit(request)
+    from gateway import analyst
+    row = await database.fetch_one(
+        audit_logs.select().where(
+            (audit_logs.c.id == body.id) & (audit_logs.c.tenant == principal.tenant)
+        )
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    try:
+        return await analyst.explain(principal.tenant, _decrypt_rows([row])[0])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503,
+                            detail=f"AI analysis unavailable: {exc}")
 
 
 # ── Cost & budgets ────────────────────────────────────────────────────────────

@@ -8,6 +8,31 @@ ordered by priority within each phase.
 
 ---
 
+## ☁️ Deployment (frontend on Vercel, backend on Render)
+
+The two halves deploy separately — **Vercel cannot host the FastAPI backend**
+(it needs persistent DB connections, a Redis event bus, and background workers).
+
+**Backend → Render** (`render.yaml` blueprint at repo root):
+1. Render → New → **Blueprint** → select this repo. It provisions the
+   `aegis-gateway` Docker web service + a managed `aegis-redis` instance.
+2. Set the `sync: false` secrets in the dashboard: `DATABASE_URL` (Supabase DSN
+   with `?sslmode=require`), `JWT_SECRET` (≥32 random chars), `ENCRYPTION_KEY`
+   (Fernet key), `NOTARY_PRIVATE_KEY_PEM`, `CORS_ORIGINS` (your Vercel URL),
+   `APP_BASE_URL`. `REDIS_URL`, `ENVIRONMENT=production`, `HSTS=true`, and
+   `AUTO_MIGRATE=false` are wired automatically.
+3. The container runs `alembic upgrade head` on boot and binds `$PORT`.
+
+**Frontend → Vercel** (`frontend/vercel.json`):
+1. Vercel → New Project → set **Root Directory = `frontend`**.
+2. Add env var `VITE_API_URL` = your Render backend URL (e.g.
+   `https://aegis-gateway.onrender.com`). Optionally `VITE_API_KEY`.
+3. `vercel.json` adds SPA rewrites, a strict CSP, HSTS, and asset caching.
+
+After both are up, set the backend's `CORS_ORIGINS` to the exact Vercel domain.
+
+---
+
 ## 🔐 Hardening shipped in this release ✅
 
 Security & robustness work completed (see `backend/config.py` for all knobs):
@@ -171,7 +196,14 @@ cd backend && alembic stamp head          # existing DB already built by dev syn
 - 🟠 Per-tenant / per-key rate limits (distributed, Redis-backed — current limiter is per-instance).
 
 ### 2.4 Arbitrary upstream support
-- 🟠 Configurable `upstream_url` so Aegis can govern any company API/agent endpoint, not only the 3 LLM providers.
+- ✅ **OpenAI-compatible drop-in proxy** — `POST /v1/chat/completions` + `GET /v1/models`.
+  Clients point their base URL at Aegis and send the **ingress key as
+  `Authorization: Bearer`** (also accepted via `X-API-Key`); requests run through
+  the full pipeline, forward to the provider Aegis routes to by model name, and
+  return a standard ChatCompletion. Governance maps to HTTP codes (403 blocked,
+  429 budget, 409 held, 413 oversized). Surfaced in the **Integration** dashboard tab.
+- 🟠 Native Anthropic (`/v1/messages`) + Gemini-shaped endpoints; streaming (SSE).
+- 🟠 Configurable `upstream_url` so Aegis can govern any company API/agent endpoint, not only LLM providers.
 - 🟢 Pluggable adapter interface for custom upstreams + response transforms.
 
 ---

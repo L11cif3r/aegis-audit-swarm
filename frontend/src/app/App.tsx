@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Activity, ShieldAlert, Users, AudioLines, Wallet, BadgeCheck, FileLock2, Server,
+  Activity, ShieldAlert, Users, AudioLines, Wallet, BadgeCheck, FileLock2, Server, Plug,
 } from 'lucide-react';
 
 import Background from './components/shell/Background';
@@ -30,18 +30,20 @@ function readAccountAction():
 import Component01DashboardOverview from '../imports/01DashboardOverview';
 import Component02SecurityCenter from '../imports/02SecurityCenter';
 import Component03LeadPipeline from '../imports/03LeadPipeline';
-import Component04VoiceAgent from '../imports/04VoiceAgent';
+import Component04Sessions from '../imports/04Sessions';
 import Component05CostBilling from '../imports/05CostBilling';
 import Component06Compliance from '../imports/06Compliance';
 import Component07Evidence from '../imports/07Evidence';
 import Component08GatewayConfig from '../imports/08GatewayConfig';
+import Component09Integration from '../imports/09Integration';
 
 const TABS: TabDef[] = [
   { id: 'dashboard', label: 'Overview', icon: Activity },
   { id: 'security', label: 'Security', icon: ShieldAlert },
   { id: 'gateway', label: 'Gateway', icon: Server },
+  { id: 'integration', label: 'Integration', icon: Plug },
   { id: 'leads', label: 'Leads', icon: Users },
-  { id: 'voice', label: 'Voice', icon: AudioLines },
+  { id: 'sessions', label: 'Sessions', icon: AudioLines },
   { id: 'billing', label: 'Billing', icon: Wallet },
   { id: 'compliance', label: 'Trust', icon: BadgeCheck },
   { id: 'evidence', label: 'Evidence', icon: FileLock2 },
@@ -51,11 +53,12 @@ const VIEWS: Record<string, React.ComponentType> = {
   dashboard: Component01DashboardOverview,
   security: Component02SecurityCenter,
   leads: Component03LeadPipeline,
-  voice: Component04VoiceAgent,
+  sessions: Component04Sessions,
   billing: Component05CostBilling,
   compliance: Component06Compliance,
   evidence: Component07Evidence,
   gateway: Component08GatewayConfig,
+  integration: Component09Integration,
 };
 
 type Phase = 'loading' | 'landing' | 'auth' | 'app';

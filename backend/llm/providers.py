@@ -83,50 +83,85 @@ def _estimate_usage(prompt: str, text: str) -> TokenUsage:
                       source="estimated")
 
 
-def _call_anthropic(tenant: str, model: str, prompt: str, max_tokens: int) -> tuple[str, TokenUsage]:
-    r = _anthropic_client(tenant).messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = r.content[0].text
+Message = dict[str, str]
+
+
+def _as_messages(prompt: str) -> list[Message]:
+    return [{"role": "user", "content": prompt}]
+
+
+def flatten_messages(messages: list[Message]) -> str:
+    """Collapse a chat transcript into one string for scanning + logging."""
+    parts = []
+    for m in messages:
+        role = (m.get("role") or "user").strip()
+        content = m.get("content") or ""
+        parts.append(f"{role}: {content}" if role != "user" else content)
+    return "\n\n".join(parts).strip()
+
+
+def _split_system(messages: list[Message]) -> tuple[str, list[Message]]:
+    system = "\n".join(m["content"] for m in messages if m.get("role") == "system")
+    rest = [m for m in messages if m.get("role") != "system"]
+    return system, rest
+
+
+def _to_gemini_contents(messages: list[Message]) -> list[dict]:
+    role_map = {"assistant": "model", "system": "user", "user": "user", "tool": "user"}
+    return [
+        {"role": role_map.get(m.get("role"), "user"),
+         "parts": [{"text": m.get("content") or ""}]}
+        for m in messages
+    ]
+
+
+def _call_anthropic_chat(tenant, model, messages, max_tokens, temperature) -> tuple[str, TokenUsage]:
+    system, msgs = _split_system(messages)
+    kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": msgs}
+    if system:
+        kwargs["system"] = system
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    r = _anthropic_client(tenant).messages.create(**kwargs)
+    text = "".join(
+        b.text for b in r.content if getattr(b, "type", None) == "text"
+    ) or (r.content[0].text if r.content else "")
     usage = from_anthropic(getattr(r, "usage", None))
     if usage.total_tokens == 0:
-        usage = _estimate_usage(prompt, text)
+        usage = _estimate_usage(flatten_messages(messages), text)
     return text, usage
 
 
-def _call_openai_compat(tenant: str, provider: str, model: str, prompt: str, max_tokens: int) -> tuple[str, TokenUsage]:
-    r = _openai_compat_client(tenant, provider).chat.completions.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+def _call_openai_compat_chat(tenant, provider, model, messages, max_tokens, temperature) -> tuple[str, TokenUsage]:
+    kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    r = _openai_compat_client(tenant, provider).chat.completions.create(**kwargs)
     text = r.choices[0].message.content or ""
     usage = from_openai(getattr(r, "usage", None))
     if usage.total_tokens == 0:
-        usage = _estimate_usage(prompt, text)
+        usage = _estimate_usage(flatten_messages(messages), text)
     return text, usage
 
 
-def _call_google(tenant: str, model: str, prompt: str, max_tokens: int) -> tuple[str, TokenUsage]:
+def _call_google_chat(tenant, model, messages, max_tokens, temperature) -> tuple[str, TokenUsage]:
     client = _google_client(tenant)
+    contents = _to_gemini_contents(messages)
+    config: dict = {"max_output_tokens": max_tokens}
+    if temperature is not None:
+        config["temperature"] = temperature
     try:
-        r = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config={"max_output_tokens": max_tokens},
-        )
+        r = client.models.generate_content(model=model, contents=contents, config=config)
     except (TypeError, ValueError):
-        r = client.models.generate_content(model=model, contents=prompt)
+        r = client.models.generate_content(model=model, contents=contents)
     text = r.text or ""
     usage = from_google(getattr(r, "usage_metadata", None))
     if usage.total_tokens == 0:
-        usage = _estimate_usage(prompt, text)
+        usage = _estimate_usage(flatten_messages(messages), text)
     return text, usage
 
 
-def _call_custom(tenant: str, row: dict, model: str, prompt: str, max_tokens: int) -> tuple[str, TokenUsage]:
+def _custom_client(tenant: str, row: dict):
     import openai
 
     base = (row.get("base_url") or "").rstrip("/")
@@ -142,15 +177,18 @@ def _call_custom(tenant: str, row: dict, model: str, prompt: str, max_tokens: in
             api_key=key, base_url=api_base.rstrip("/"),
             timeout=_timeout(), max_retries=1,
         )
-    r = _clients[ck].chat.completions.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    return _clients[ck]
+
+
+def _call_custom_chat(tenant, row, model, messages, max_tokens, temperature) -> tuple[str, TokenUsage]:
+    kwargs: dict = {"model": model, "max_tokens": max_tokens, "messages": messages}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    r = _custom_client(tenant, row).chat.completions.create(**kwargs)
     text = r.choices[0].message.content or ""
     usage = from_openai(getattr(r, "usage", None))
     if usage.total_tokens == 0:
-        usage = _estimate_usage(prompt, text)
+        usage = _estimate_usage(flatten_messages(messages), text)
     return text, usage
 
 
@@ -163,29 +201,34 @@ def _resolve_dispatch(tenant: str, model: str) -> tuple[str, str, dict | None]:
     return choice.provider, choice.model, None
 
 
-async def call_model_usage(
-    tenant: str, model: str, prompt: str, *, max_tokens: int = 1024
-) -> tuple[str, str, TokenUsage]:
-    """Invoke a model and return (text, resolved_model, TokenUsage)."""
+def _prepare_call(tenant: str, model: str, max_tokens: int) -> tuple[str, str, dict | None, int]:
+    """Resolve provider, validate it's usable, and cap output tokens."""
     provider, resolved_model, custom_row = _resolve_dispatch(tenant, model)
     if not provider_store.is_provider_enabled(tenant, provider):
         raise RuntimeError(f"Provider '{provider}' is disabled")
     if not provider_store.get_effective_api_key(tenant, provider):
         raise RuntimeError(f"No API key configured for '{provider}'")
+    capped = max(1, min(int(max_tokens), settings.max_output_tokens))
+    return provider, resolved_model, custom_row, capped
 
-    # Hard cap output tokens to protect against cost blow-ups.
-    max_tokens = max(1, min(int(max_tokens), settings.max_output_tokens))
+
+async def call_chat_usage(
+    tenant: str, model: str, messages: list[Message], *,
+    max_tokens: int = 1024, temperature: float | None = None,
+) -> tuple[str, str, TokenUsage]:
+    """Invoke a model with a full chat transcript. Returns (text, model, usage)."""
+    provider, resolved_model, custom_row, max_tokens = _prepare_call(tenant, model, max_tokens)
 
     if custom_row:
-        fn = lambda: _call_custom(tenant, custom_row, resolved_model, prompt, max_tokens)
-    elif provider in _OPENAI_COMPAT:
-        fn = lambda: _call_openai_compat(tenant, provider, resolved_model, prompt, max_tokens)
+        fn = lambda: _call_custom_chat(tenant, custom_row, resolved_model, messages, max_tokens, temperature)
     elif provider == "anthropic":
-        fn = lambda: _call_anthropic(tenant, resolved_model, prompt, max_tokens)
+        fn = lambda: _call_anthropic_chat(tenant, resolved_model, messages, max_tokens, temperature)
     elif provider == "google":
-        fn = lambda: _call_google(tenant, resolved_model, prompt, max_tokens)
+        fn = lambda: _call_google_chat(tenant, resolved_model, messages, max_tokens, temperature)
+    elif provider in _OPENAI_COMPAT:
+        fn = lambda: _call_openai_compat_chat(tenant, provider, resolved_model, messages, max_tokens, temperature)
     else:
-        fn = lambda: _call_openai_compat(tenant, provider, resolved_model, prompt, max_tokens)
+        fn = lambda: _call_openai_compat_chat(tenant, provider, resolved_model, messages, max_tokens, temperature)
 
     try:
         # Backstop timeout in case a provider SDK ignores its own.
@@ -193,6 +236,13 @@ async def call_model_usage(
     except asyncio.TimeoutError:
         raise RuntimeError(f"Provider '{provider}' timed out after {_timeout()}s")
     return text, resolved_model, usage
+
+
+async def call_model_usage(
+    tenant: str, model: str, prompt: str, *, max_tokens: int = 1024
+) -> tuple[str, str, TokenUsage]:
+    """Invoke a model with a single prompt. Returns (text, resolved_model, usage)."""
+    return await call_chat_usage(tenant, model, _as_messages(prompt), max_tokens=max_tokens)
 
 
 async def call_model_real(

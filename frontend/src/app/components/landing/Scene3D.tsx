@@ -8,6 +8,22 @@ interface SceneProps {
   progress: MotionValue<number>;
 }
 
+type EasedRef = { current: number };
+
+// Frame-rate-independent follower: eases a plain number toward the scroll
+// MotionValue every frame so the morph/camera glide smoothly regardless of how
+// jerky the raw scroll input is. Runs first (registration order) so children
+// read the freshly-updated value within the same frame.
+function ProgressFollower({ progress, eased }: { progress: MotionValue<number>; eased: EasedRef }) {
+  useFrame((_, delta) => {
+    const target = THREE.MathUtils.clamp(progress.get(), 0, 1);
+    // smoothing time-constant ~0.12s; pow keeps it stable across frame rates
+    const k = 1 - Math.pow(0.0008, Math.min(delta, 0.1));
+    eased.current += (target - eased.current) * k;
+  });
+  return null;
+}
+
 const N = 3200; // number of cube blocks
 
 // ── Shape target generators (each returns a Float32Array of N*3) ──────────────
@@ -99,7 +115,7 @@ const PALETTE = ['#6366f1', '#22d3ee', '#818cf8', '#f472b6', '#a78bfa'].map((c) 
 
 const smoothstep = (t: number) => t * t * (3 - 2 * t);
 
-function Morph({ progress }: SceneProps) {
+function Morph({ eased }: { eased: EasedRef }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const group = useRef<THREE.Group>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
@@ -129,7 +145,7 @@ function Morph({ progress }: SceneProps) {
   }, []);
 
   useFrame((state) => {
-    const p = THREE.MathUtils.clamp(progress.get(), 0, 1);
+    const p = THREE.MathUtils.clamp(eased.current, 0, 1);
     const segs = targets.length - 1;
     const scaled = p * segs;
     let idx = Math.floor(scaled);
@@ -186,11 +202,11 @@ function Morph({ progress }: SceneProps) {
 }
 
 // "AI" label that pops in while the sphere is assembled (~p 0.5).
-function AILabel({ progress }: SceneProps) {
+function AILabel({ eased }: { eased: EasedRef }) {
   const ref = useRef<THREE.Group>(null);
   const shown = useRef(0);
   useFrame(() => {
-    const p = progress.get();
+    const p = eased.current;
     const target = p > 0.43 && p < 0.6 ? 1 : 0;
     shown.current += (target - shown.current) * 0.12;
     if (ref.current) {
@@ -209,9 +225,9 @@ function AILabel({ progress }: SceneProps) {
   );
 }
 
-function CameraRig({ progress }: SceneProps) {
+function CameraRig({ eased }: { eased: EasedRef }) {
   useFrame((state) => {
-    const p = progress.get();
+    const p = eased.current;
     state.camera.position.z = 6.2 - p * 1.6;
     state.camera.position.x = Math.sin(p * Math.PI * 2) * 0.7;
     state.camera.position.y = Math.sin(p * Math.PI) * 0.4;
@@ -221,20 +237,22 @@ function CameraRig({ progress }: SceneProps) {
 }
 
 export default function Scene3D({ progress }: SceneProps) {
+  const eased = useRef(0);
   return (
     <Canvas
       camera={{ position: [0, 0, 6.2], fov: 45 }}
       gl={{ alpha: true, antialias: true }}
       dpr={[1, 1.8]}
     >
+      <ProgressFollower progress={progress} eased={eased} />
       <ambientLight intensity={0.7} />
       <pointLight position={[5, 5, 6]} intensity={150} color="#a5b4fc" />
       <pointLight position={[-6, -3, 2]} intensity={90} color="#22d3ee" />
       <pointLight position={[0, 5, -5]} intensity={70} color="#f472b6" />
-      <Morph progress={progress} />
-      <AILabel progress={progress} />
+      <Morph eased={eased} />
+      <AILabel eased={eased} />
       <Sparkles count={120} scale={14} size={2.2} speed={0.25} opacity={0.4} color="#a5b4fc" />
-      <CameraRig progress={progress} />
+      <CameraRig eased={eased} />
     </Canvas>
   );
 }

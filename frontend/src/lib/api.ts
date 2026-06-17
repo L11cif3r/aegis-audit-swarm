@@ -165,6 +165,12 @@ export const api = {
   stats: () => apiGet(`/audit/stats`),
   threats: () => apiGet(`/audit/threats`),
   costSummary: () => apiGet(`/cost/summary`),
+  analystSummary: (limit = 60) =>
+    apiGet<{ summary: string; model: string | null; generated: boolean }>(
+      `/analyst/summary?limit=${limit}`,
+    ),
+  analystExplain: (id: string) =>
+    apiPost<{ explanation: string; model: string }>(`/analyst/explain`, { id }),
   getBudget: () => apiGet(`/cost/budget`),
   setBudget: (body: { daily_limit_usd: number | null; monthly_limit_usd: number | null }) =>
     apiPost(`/cost/budget`, body),

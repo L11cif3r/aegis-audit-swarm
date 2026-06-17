@@ -18,7 +18,7 @@ from database import database, audit_logs
 from bus import TOPIC_GATE_DECISION, publish
 from alerting import send_alert
 
-from llm import call_model_usage, compute_cost
+from llm import call_model_usage, call_chat_usage, compute_cost
 from llm.router import select_model
 from gateway import provider_store
 from scoring import risk
@@ -77,6 +77,8 @@ async def process_request(
     task: str | None,
     tenant: str,
     max_tokens: int | None = None,
+    messages: list[dict] | None = None,
+    temperature: float | None = None,
 ) -> dict:
     req_id = f"req_{uuid.uuid4().hex[:6]}"
     timestamp = _now()
@@ -198,9 +200,15 @@ async def process_request(
         return {**entry, "reasons": assessment.reasons, "signals": assessment.signals}
 
     try:
-        resp_text, resolved_model, usage = await call_model_usage(
-            tenant, resolved_model, prompt, max_tokens=tok_limit
-        )
+        if messages:
+            resp_text, resolved_model, usage = await call_chat_usage(
+                tenant, resolved_model, messages,
+                max_tokens=tok_limit, temperature=temperature,
+            )
+        else:
+            resp_text, resolved_model, usage = await call_model_usage(
+                tenant, resolved_model, prompt, max_tokens=tok_limit
+            )
         # Output-side scanning: redact leaked secrets/PII/unsafe content from the
         # model's response before it is returned or persisted.
         out_threat = None

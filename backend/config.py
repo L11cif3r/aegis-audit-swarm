@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     # manage schema with Alembic migrations instead.
     auto_migrate: bool = Field(default=True)
 
+    # ── AI Security Analyst (Claude-powered) ──────────────────────────────────
+    # Model used to generate plain-language threat summaries + session
+    # explanations. Uses the tenant's configured Anthropic key.
+    analyst_model: str = Field(default="claude-sonnet-4-6")
+
     # ── Risk gate ─────────────────────────────────────────────────────────────
     risk_hold_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 

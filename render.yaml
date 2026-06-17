@@ -1,0 +1,54 @@
+# render.yaml — Aegis backend deployment blueprint (Render)
+#
+# Deploys the FastAPI gateway as a Docker web service + a managed Redis instance
+# for the rate limiter / event bus. The frontend deploys separately to Vercel
+# (see frontend/vercel.json).
+#
+# Usage: push this repo, then in Render → "New" → "Blueprint" and point it here.
+# Fill the `sync: false` secrets in the Render dashboard after the first deploy.
+services:
+  - type: web
+    name: aegis-gateway
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter            # bump to standard+ for production traffic
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: UVICORN_WORKERS
+        value: "2"
+      # TLS is terminated by Render → safe to enable HSTS.
+      - key: HSTS
+        value: "true"
+      # Use Alembic migrations (the Dockerfile runs `alembic upgrade head`),
+      # never the dev auto-migrator.
+      - key: AUTO_MIGRATE
+        value: "false"
+      # Redis (rate limiter + durable event bus), wired from the instance below.
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: aegis-redis
+          property: connectionString
+      # ── Secrets: set these in the Render dashboard (never commit them) ───────
+      - key: DATABASE_URL          # Supabase/Postgres DSN, ?sslmode=require
+        sync: false
+      - key: JWT_SECRET            # >=32 random chars
+        sync: false
+      - key: ENCRYPTION_KEY        # Fernet key (provider keys at rest)
+        sync: false
+      - key: NOTARY_PRIVATE_KEY_PEM # stable evidence-signing key
+        sync: false
+      - key: CORS_ORIGINS          # e.g. https://your-app.vercel.app
+        sync: false
+      - key: APP_BASE_URL          # public dashboard URL (email links)
+        sync: false
+
+  - type: redis
+    name: aegis-redis
+    plan: starter
+    maxmemoryPolicy: noeviction   # don't drop event-bus entries under pressure
+    ipAllowList: []               # internal-only (reachable from the web service)

@@ -71,7 +71,7 @@ export default function Landing({ onExplore, onLogin, onSignup, authed }: Landin
       {/* Fixed 3D canvas behind the scrolling copy */}
       <div className="fixed inset-0 -z-[5] pointer-events-none">
         <Suspense fallback={null}>
-          <Scene3D progress={smooth} />
+          <Scene3D progress={scrollYProgress} />
         </Suspense>
       </div>
 

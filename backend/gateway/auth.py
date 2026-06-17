@@ -65,17 +65,19 @@ def issue_token(*, subject: str, tenant: str, roles: tuple[str, ...] = ("admin",
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def _decode_jwt(token: str) -> Principal:
+def _try_decode_jwt(token: str) -> Principal | None:
+    """Decode a JWT, returning None (instead of raising) on any JWT error.
+
+    Lets the caller fall back to treating a Bearer value as an API key — needed
+    so OpenAI-style clients can send the ingress key as ``Authorization: Bearer``.
+    """
     import jwt
     try:
         claims = jwt.decode(
             token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
         )
-    except jwt.PyJWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {exc}",
-        )
+    except jwt.PyJWTError:
+        return None
     raw_roles = claims.get("roles", [])
     roles = tuple(raw_roles) if isinstance(raw_roles, (list, tuple)) else (str(raw_roles),)
     return Principal(
@@ -88,6 +90,30 @@ def _decode_jwt(token: str) -> Principal:
     )
 
 
+def _decode_jwt(token: str) -> Principal:
+    """Strict decode that raises 401 on invalid tokens."""
+    principal = _try_decode_jwt(token)
+    if principal is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+    return principal
+
+
+async def _principal_from_api_key(key: str, x_tenant: str | None) -> Principal | None:
+    """Resolve an API key to a principal: global operator key, then ingress key."""
+    if key in settings.api_key_set:
+        return Principal(subject="api-key", tenant=x_tenant or "default",
+                         scheme="api_key", roles=("operator",))
+    from gateway import users as users_store
+    user = await users_store.get_by_api_key(key)
+    if user:
+        return Principal(subject=user["id"], tenant=user["tenant"],
+                         scheme="api_key", roles=(user.get("role") or "admin",))
+    return None
+
+
 async def authenticate(
     x_api_key: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
@@ -95,27 +121,34 @@ async def authenticate(
 ) -> Principal:
     auth_configured = bool(settings.api_key_set) or bool(settings.jwt_secret)
 
-    # 1. JWT bearer (dashboard sessions).
-    if authorization and authorization.lower().startswith("bearer ") and settings.jwt_secret:
-        principal = _decode_jwt(authorization.split(" ", 1)[1])
-        from gateway import tokens
-        if await tokens.is_revoked(principal.jti):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session has been revoked.",
-            )
-        return principal
+    # 1. Bearer: a JWT (dashboard session) OR an API key sent the OpenAI way.
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        # A JWT always has exactly two dots; API keys have none.
+        if token.count(".") == 2 and settings.jwt_secret:
+            principal = _try_decode_jwt(token)
+            if principal:
+                from gateway import tokens
+                if await tokens.is_revoked(principal.jti):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Session has been revoked.",
+                    )
+                return principal
+        # Not a valid JWT — treat the bearer value as an API key.
+        principal = await _principal_from_api_key(token, x_tenant)
+        if principal:
+            return principal
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials.",
+        )
 
-    # 2. API key — global operator keys, then per-tenant ingress keys.
+    # 2. API key via X-API-Key — global operator keys, then per-tenant ingress.
     if x_api_key:
-        if x_api_key in settings.api_key_set:
-            return Principal(subject="api-key", tenant=x_tenant or "default",
-                             scheme="api_key", roles=("operator",))
-        from gateway import users as users_store
-        user = await users_store.get_by_api_key(x_api_key)
-        if user:
-            return Principal(subject=user["id"], tenant=user["tenant"],
-                             scheme="api_key", roles=(user.get("role") or "admin",))
+        principal = await _principal_from_api_key(x_api_key, x_tenant)
+        if principal:
+            return principal
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key.",
