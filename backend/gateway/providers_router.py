@@ -61,6 +61,50 @@ async def update_provider(
     return updated
 
 
+@router.delete("/providers/{provider_id}")
+async def delete_provider(
+    provider_id: str,
+    principal: Principal = Depends(require_role("operator")),
+):
+    if provider_id == "custom":
+        raise HTTPException(status_code=400, detail="Nothing to delete")
+    ok = await provider_store.delete_provider(principal.tenant, provider_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    return {"ok": True, "provider": provider_id}
+
+
+@router.post("/providers/{provider_id}/models/refresh")
+async def refresh_models(
+    provider_id: str,
+    principal: Principal = Depends(require_role("operator")),
+):
+    """Pull the latest model list live from the provider and persist it."""
+    from llm.providers import list_models
+    from llm.router import is_builtin_provider
+
+    if provider_id == "custom":
+        raise HTTPException(status_code=400, detail="Save the custom provider first")
+    if not is_builtin_provider(provider_id) and not provider_store.is_custom_provider(provider_id):
+        raise HTTPException(status_code=404, detail="Unknown provider")
+
+    await provider_store.ensure_seeded(principal.tenant)
+    if not provider_store.get_effective_api_key(principal.tenant, provider_id):
+        raise HTTPException(status_code=400, detail="Add an API key for this provider first")
+
+    try:
+        models = await list_models(principal.tenant, provider_id)
+    except Exception as exc:  # noqa: BLE001 - surface provider/transport errors cleanly
+        raise HTTPException(status_code=502, detail=f"Could not fetch models: {exc}")
+    if not models:
+        raise HTTPException(status_code=502, detail="Provider returned no models")
+
+    updated = await provider_store.update_provider(
+        principal.tenant, provider_id, {"models": models}
+    )
+    return {"provider": provider_id, "count": len(models), "models": models, "config": updated}
+
+
 @router.post("/providers/{provider_id}/test")
 async def test_provider(
     provider_id: str,

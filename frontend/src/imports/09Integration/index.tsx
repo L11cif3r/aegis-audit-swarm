@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { Copy, Check, Plug, KeyRound, ArrowRight, Info } from 'lucide-react';
-import { API_BASE } from '../../lib/api';
+import { useEffect, useMemo, useState } from 'react';
+import { Copy, Check, Plug, KeyRound, ArrowRight, Info, ChevronDown, Cpu } from 'lucide-react';
+import { API_BASE, api, type ProviderConfig } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { PageHeader, Panel, SectionTitle } from '../../app/components/shell/primitives';
 import Reveal from '../../app/components/shell/Reveal';
@@ -53,8 +53,39 @@ export default function Component09Integration() {
   const { copied, copy } = useCopy();
   const [tab, setTab] = useState('javascript');
 
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [providerId, setProviderId] = useState('');
+  const [model, setModel] = useState('gpt-4o-mini');
+
   const base = `${API_BASE}/v1`;
   const key = user?.ingress_api_key || 'ak_your_ingress_key';
+
+  useEffect(() => {
+    let alive = true;
+    api.providers().then((list) => {
+      if (!alive) return;
+      setProviders(list);
+      // Prefer a provider the user actually configured a key for.
+      const preferred = list.find((p) => p.api_key_set && p.enabled)
+        || list.find((p) => p.api_key_set)
+        || list.find((p) => p.enabled)
+        || list[0];
+      if (preferred) {
+        setProviderId(preferred.provider);
+        setModel(preferred.default_model || preferred.models?.[0] || 'gpt-4o-mini');
+      }
+    }).catch(() => { /* offline — keep defaults */ });
+    return () => { alive = false; };
+  }, []);
+
+  const selectedProvider = providers.find((p) => p.provider === providerId) || null;
+  const modelOptions = selectedProvider?.models ?? [];
+
+  const onProviderChange = (id: string) => {
+    setProviderId(id);
+    const p = providers.find((x) => x.provider === id);
+    setModel(p?.default_model || p?.models?.[0] || '');
+  };
 
   const snippets: Record<string, string> = useMemo(() => ({
     javascript:
@@ -66,7 +97,7 @@ const client = new OpenAI({
 });
 
 const res = await client.chat.completions.create({
-  model: "gpt-4o-mini",        // any model you configured in Gateway
+  model: "${model}",  // model you configured in Gateway
   messages: [{ role: "user", content: "Hello!" }],
 });
 console.log(res.choices[0].message.content);`,
@@ -79,7 +110,7 @@ client = OpenAI(
 )
 
 res = client.chat.completions.create(
-    model="gpt-4o-mini",       # any model you configured in Gateway
+    model="${model}",  # model you configured in Gateway
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(res.choices[0].message.content)`,
@@ -93,7 +124,7 @@ export OPENAI_API_KEY="${key}"`,
   -H "Authorization: Bearer ${key}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gpt-4o-mini",
+    "model": "${model}",
     "messages": [{ "role": "user", "content": "Hello!" }]
   }'`,
     app:
@@ -102,7 +133,7 @@ export OPENAI_API_KEY="${key}"`,
 
   Base URL / API Host :  ${base}
   API Key             :  ${key}
-  Model               :  a model you enabled in Gateway (e.g. gpt-4o-mini)
+  Model               :  ${model}
 
 That's it — every request now flows through Aegis.`,
     proxy:
@@ -115,7 +146,7 @@ traffic to Aegis at the network layer (transparent egress proxy):
     (TLS interception). Powerful, but set up by your infra/security team.
 
 Most teams start with the .env approach and graduate to this later.`,
-  }), [base, key]);
+  }), [base, key, model]);
 
   return (
     <div className="flex flex-col gap-8">
@@ -166,6 +197,60 @@ Most teams start with the .env approach and graduate to this later.`,
             </span>
             <h2 className="text-[15px] font-semibold text-ink">Drop-in setup</h2>
           </div>
+
+          {/* Provider + model picker — drives every snippet below */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-soft">Provider</span>
+              <div className="relative">
+                <select
+                  value={providerId}
+                  onChange={(e) => onProviderChange(e.target.value)}
+                  disabled={providers.length === 0}
+                  className="w-full appearance-none rounded-xl border border-hairline bg-surface2/60 py-2.5 pl-3 pr-9 text-[12px] text-ink outline-none focus:border-brand/50 disabled:opacity-60"
+                >
+                  {providers.length === 0 ? (
+                    <option value="">Loading…</option>
+                  ) : (
+                    providers.map((p) => (
+                      <option key={p.provider} value={p.provider}>
+                        {p.display_name}{p.api_key_set ? ' ✓' : ''}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-soft pointer-events-none" />
+              </div>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-soft">Model</span>
+              <div className="relative">
+                <Cpu size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-soft pointer-events-none" />
+                {modelOptions.length > 0 ? (
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-hairline bg-surface2/60 py-2.5 pl-9 pr-9 text-[12px] text-ink outline-none focus:border-brand/50"
+                  >
+                    {modelOptions.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder="gpt-4o-mini"
+                    className="w-full rounded-xl border border-hairline bg-surface2/60 py-2.5 pl-9 pr-3 text-[12px] text-ink outline-none focus:border-brand/50"
+                  />
+                )}
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-soft pointer-events-none" />
+              </div>
+            </label>
+          </div>
+          <p className="text-[11px] text-soft">
+            Pick the provider and model you configured in <strong className="text-ink">Gateway</strong> — the snippets below update automatically. A <span className="text-ink">✓</span> marks providers with a saved key. Use <strong className="text-ink">Refresh</strong> in Gateway to pull the newest models.
+          </p>
 
           <div className="flex flex-wrap gap-1.5">
             {TABS.map((t) => (

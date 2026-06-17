@@ -192,6 +192,54 @@ def _call_custom_chat(tenant, row, model, messages, max_tokens, temperature) -> 
     return text, usage
 
 
+def _filter_chat_models(provider: str, ids: list[str]) -> list[str]:
+    """Keep chat-capable models and drop embeddings / audio / image endpoints."""
+    cleaned = [str(i) for i in ids if i]
+    if provider in ("openai", "azure"):
+        kept = [i for i in cleaned if "gpt" in i or i.startswith(("o1", "o3", "o4"))]
+    elif provider == "google":
+        kept = [i for i in cleaned if "gemini" in i]
+    else:
+        kept = cleaned
+    kept = kept or cleaned  # never wipe everything if a filter is too aggressive
+    return sorted(set(kept))[:80]
+
+
+async def list_models(tenant: str, provider: str) -> list[str]:
+    """Fetch the live model list straight from the provider's API.
+
+    Lets the Gateway dropdowns reflect newly released models without code
+    changes. Uses the tenant's stored key. Raises on transport/auth errors.
+    """
+    def _run() -> list[str]:
+        if provider == "anthropic":
+            r = _anthropic_client(tenant).models.list()
+            return [m.id for m in getattr(r, "data", []) if getattr(m, "id", None)]
+        if provider == "google":
+            out: list[str] = []
+            for m in _google_client(tenant).models.list():
+                name = (getattr(m, "name", "") or "").split("/")[-1]
+                if name:
+                    out.append(name)
+            return out
+        # OpenAI-compatible: openai, groq, azure, openrouter, custom_*
+        if is_custom_provider(provider):
+            row = provider_store.get_cached(tenant, provider)
+            if not row:
+                raise RuntimeError("Custom provider not found")
+            client = _custom_client(tenant, row)
+        else:
+            client = _openai_compat_client(tenant, provider)
+        r = client.models.list()
+        return [m.id for m in getattr(r, "data", []) if getattr(m, "id", None)]
+
+    try:
+        raw = await asyncio.wait_for(asyncio.to_thread(_run), timeout=_timeout() + 5)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError("Provider model listing timed out") from exc
+    return _filter_chat_models(provider, raw)
+
+
 def _resolve_dispatch(tenant: str, model: str) -> tuple[str, str, dict | None]:
     """Return (provider_id, model, custom_row|None)."""
     row = provider_store.get_cached_by_model(tenant, model)

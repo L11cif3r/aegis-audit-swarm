@@ -195,11 +195,13 @@ def _effective_key(row: dict, tenant: str) -> str | None:
 
 
 def _models_list(row: dict) -> list[str]:
-    if is_builtin_provider(row["provider"]):
-        return models_for_provider(row["provider"])
+    # A tenant-specific list (e.g. refreshed live from the provider API) always
+    # wins over the static built-in catalog so newly released models show up.
     extra = _parse_json(row.get("models_json"), [])
     if isinstance(extra, list) and extra:
         return [str(m) for m in extra]
+    if is_builtin_provider(row["provider"]):
+        return models_for_provider(row["provider"])
     dm = row.get("default_model")
     return [dm] if dm else []
 
@@ -469,6 +471,50 @@ async def update_provider(tenant: str, provider: str, body: dict) -> dict | None
     llm_providers.invalidate_clients()
     row = get_cached(tenant, provider)
     return _public_view(row, tenant) if row else None
+
+
+async def delete_provider(tenant: str, provider: str) -> bool:
+    """Remove a tenant's saved configuration.
+
+    Custom providers are deleted outright. Built-in providers can't be removed
+    from the catalog, so they're reset to factory defaults (key + overrides
+    cleared), which also drops them out of the "saved configs" list in the UI.
+    """
+    await reload_cache(tenant)
+    if is_custom_provider(provider):
+        await database.execute(
+            provider_settings.delete().where(
+                (provider_settings.c.tenant == tenant)
+                & (provider_settings.c.provider == provider)
+            )
+        )
+    elif is_builtin_provider(provider):
+        d = _default_row(tenant, provider)
+        await database.execute(
+            provider_settings.update().where(
+                (provider_settings.c.tenant == tenant)
+                & (provider_settings.c.provider == provider)
+            ).values(
+                display_name=d["display_name"],
+                api_key=None,
+                base_url=d.get("base_url"),
+                chat_endpoint=None,
+                default_model=d["default_model"],
+                input_price=d["input_price"],
+                output_price=d["output_price"],
+                models_json=None,
+                model_prices_json=None,
+                enabled=True,
+            )
+        )
+    else:
+        return False
+
+    await reload_cache(tenant)
+    from llm import providers as llm_providers
+
+    llm_providers.invalidate_clients()
+    return True
 
 
 def _run_migration_once() -> None:

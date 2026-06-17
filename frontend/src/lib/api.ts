@@ -60,7 +60,7 @@ function refreshOnce(): Promise<boolean> {
 }
 
 async function request<T>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   body?: unknown,
   retried = false,
@@ -97,6 +97,10 @@ export async function apiGet<T = any>(path: string): Promise<T> {
 
 export async function apiPost<T = any>(path: string, body: unknown): Promise<T> {
   return request<T>("POST", path, body);
+}
+
+export async function apiDelete<T = any>(path: string): Promise<T> {
+  return request<T>("DELETE", path);
 }
 
 export type ModelPrice = {
@@ -192,6 +196,11 @@ export const api = {
   catalog: () => apiGet<ProviderCatalog>(`/gateway/catalog`),
   updateProvider: (id: string, body: Record<string, unknown>) =>
     apiPost<ProviderConfig>(`/gateway/providers/${id}`, body),
+  deleteProvider: (id: string) =>
+    apiDelete<{ ok: boolean; provider: string }>(`/gateway/providers/${id}`),
+  refreshModels: (id: string) =>
+    apiPost<{ provider: string; count: number; models: string[]; config: ProviderConfig }>(
+      `/gateway/providers/${id}/models/refresh`, {}),
   testProvider: (id: string, model?: string) =>
     apiPost<ProviderTestResult>(`/gateway/providers/${id}/test`, model ? { model } : {}),
   proxyRequest: (body: ProxyRequestBody) => apiPost(`/agent/request`, body),

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ChevronDown, Cloud, FlaskConical, KeyRound, Pencil, Plug, Save, Settings2, Zap,
+  Trash2, Pencil as PencilEdit, ListChecks, RotateCw,
 } from 'lucide-react';
 import {
   api,
@@ -175,6 +176,10 @@ export default function Component08GatewayConfig() {
   const [testLoading, setTestLoading] = useState(false);
   const [testResponse, setTestResponse] = useState<any>(null);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
       const [cat, provs] = await Promise.all([api.catalog(), api.providers()]);
@@ -324,6 +329,46 @@ export default function Component08GatewayConfig() {
     }
   };
 
+  const refreshModels = async () => {
+    if (isCustomNew) return;
+    setRefreshing(true);
+    setRefreshNote(null);
+    try {
+      const res = await api.refreshModels(selectedProviderId);
+      setRefreshNote(`Loaded ${res.count} models from the provider.`);
+      await load();
+    } catch (e: any) {
+      setRefreshNote(e?.message || 'Could not refresh models');
+    } finally {
+      setRefreshing(false);
+      setTimeout(() => setRefreshNote(null), 4000);
+    }
+  };
+
+  const editConfig = (providerId: string) => {
+    setSelectedProviderId(providerId);
+    setTestResult(null);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const deleteConfig = async (cfg: ProviderConfig) => {
+    const isCustom = cfg.kind === 'custom';
+    const msg = isCustom
+      ? `Delete custom provider "${cfg.display_name}"? This removes it permanently.`
+      : `Remove your "${cfg.display_name}" configuration? Its API key and overrides will be cleared.`;
+    if (!confirm(msg)) return;
+    setDeletingId(cfg.provider);
+    try {
+      await api.deleteProvider(cfg.provider);
+      if (selectedProviderId === cfg.provider) setSelectedProviderId('openai');
+      await load();
+    } catch (e: any) {
+      setTestResult({ ok: false, provider: cfg.provider, error: e?.message || 'Delete failed' });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const submitProxyTest = async () => {
     setTestLoading(true);
     setTestResponse(null);
@@ -341,6 +386,12 @@ export default function Component08GatewayConfig() {
 
   const showCustomFields = isCustomNew || savedConfig?.kind === 'custom';
   const keyConfigured = savedConfig?.api_key_set ?? false;
+
+  // Providers the user has actually configured (own key) or created (custom).
+  const savedConfigs = useMemo(
+    () => savedProviders.filter((p) => p.api_key_set || p.kind === 'custom'),
+    [savedProviders],
+  );
 
   return (
     <div className="flex flex-col gap-8">
@@ -392,7 +443,21 @@ export default function Component08GatewayConfig() {
 
             {/* Step 2: Model */}
             <label className="flex flex-col gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-soft">Model</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-soft">Model</span>
+                {!isCustomNew && (
+                  <button
+                    type="button"
+                    onClick={refreshModels}
+                    disabled={refreshing || !keyConfigured}
+                    title={keyConfigured ? 'Fetch the latest models from this provider' : 'Add an API key first'}
+                    className="flex items-center gap-1 text-[10px] font-semibold text-brand hover:text-brand/80 transition-colors disabled:opacity-40"
+                  >
+                    <RotateCw size={11} className={refreshing ? 'animate-spin' : ''} />
+                    {refreshing ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                )}
+              </div>
               {showCustomFields && isCustomNew ? (
                 <input
                   type="text"
@@ -422,6 +487,10 @@ export default function Component08GatewayConfig() {
               )}
             </label>
           </div>
+
+          {refreshNote && (
+            <p className="-mt-3 text-[11px] text-soft">{refreshNote}</p>
+          )}
 
           {/* Custom provider fields */}
           {showCustomFields && (
@@ -599,6 +668,73 @@ export default function Component08GatewayConfig() {
               {testing ? 'Testing…' : 'Test Provider'}
             </button>
           </div>
+        </Panel>
+      </Reveal>
+
+      {/* Saved configurations */}
+      <Reveal delay={0.08}>
+        <Panel className="flex flex-col gap-4">
+          <div className="flex items-center gap-2.5 pb-2 border-b border-hairline">
+            <span className="grid size-9 place-items-center rounded-xl bg-brand/10 text-brand">
+              <ListChecks size={17} />
+            </span>
+            <div>
+              <h2 className="text-[15px] font-semibold text-ink">Saved Configurations</h2>
+              <p className="text-[11px] text-soft">Providers you've configured. Edit loads one back into the form above.</p>
+            </div>
+          </div>
+
+          {savedConfigs.length === 0 ? (
+            <EmptyState>No saved providers yet. Add an API key above and save to see it here.</EmptyState>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {savedConfigs.map((cfg) => (
+                <div
+                  key={cfg.provider}
+                  className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-hairline bg-surface2/40 px-4 py-3"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand/10 text-brand">
+                      {cfg.kind === 'custom' ? <Cloud size={14} /> : <Settings2 size={14} />}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[13px] font-semibold text-ink truncate">{cfg.display_name}</p>
+                        <Badge tone={cfg.enabled ? 'ok' : 'neutral'}>{cfg.enabled ? 'Enabled' : 'Disabled'}</Badge>
+                        {cfg.kind === 'custom' && <Badge tone="brand">Custom</Badge>}
+                      </div>
+                      <p className="text-[11px] text-soft truncate">
+                        {cfg.default_model || 'no model'}
+                        {cfg.api_key_masked ? ` · key ${cfg.api_key_masked}` : ''}
+                        {` · ${cfg.models?.length ?? 0} models`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => editConfig(cfg.provider)}
+                      data-cursor="hover"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-hairline px-3 py-1.5 text-[11px] font-medium text-soft hover:text-ink transition-colors"
+                    >
+                      <PencilEdit size={13} />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteConfig(cfg)}
+                      disabled={deletingId === cfg.provider}
+                      data-cursor="hover"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-bad/30 px-3 py-1.5 text-[11px] font-medium text-bad hover:bg-bad/5 transition-colors disabled:opacity-50"
+                    >
+                      <Trash2 size={13} />
+                      {deletingId === cfg.provider ? 'Removing…' : 'Delete'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Panel>
       </Reveal>
 
