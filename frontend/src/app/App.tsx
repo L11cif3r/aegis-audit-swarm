@@ -8,6 +8,7 @@ import Background from './components/shell/Background';
 import LoadingScreen from './components/shell/LoadingScreen';
 import TopNav, { type TabDef } from './components/shell/TopNav';
 import CustomCursor from './components/shell/CustomCursor';
+import Saturn from './components/shell/Saturn';
 import Landing from './components/landing/Landing';
 import AuthPage from './components/auth/AuthPage';
 import AccountActionPage from './components/auth/AccountActionPage';
@@ -211,6 +212,8 @@ export default function App() {
                 </span>
               </footer>
             </main>
+
+            <Saturn />
           </motion.div>
         )}
       </AnimatePresence>

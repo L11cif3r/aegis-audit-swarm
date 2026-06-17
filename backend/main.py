@@ -325,6 +325,33 @@ async def analyst_explain(
                             detail=f"AI analysis unavailable: {exc}")
 
 
+# ── Saturn support assistant (Claude-powered, owner-funded) ───────────────────
+class AssistantMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantBody(BaseModel):
+    messages: list[AssistantMessage]
+
+
+@app.post("/assistant/chat")
+async def assistant_chat(
+    body: AssistantBody,
+    request: Request,
+    principal: Principal = Depends(authenticate),
+):
+    await enforce_rate_limit(request)
+    from gateway import assistant
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages required")
+    try:
+        text, model = await assistant.reply([m.model_dump() for m in body.messages])
+        return {"reply": text, "model": model}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Saturn unavailable: {exc}")
+
+
 # ── Cost & budgets ────────────────────────────────────────────────────────────
 class BudgetBody(BaseModel):
     daily_limit_usd: float | None = None

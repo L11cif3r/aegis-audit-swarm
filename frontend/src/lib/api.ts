@@ -171,6 +171,8 @@ export const api = {
     ),
   analystExplain: (id: string) =>
     apiPost<{ explanation: string; model: string }>(`/analyst/explain`, { id }),
+  assistantChat: (messages: { role: string; content: string }[]) =>
+    apiPost<{ reply: string; model: string }>(`/assistant/chat`, { messages }),
   getBudget: () => apiGet(`/cost/budget`),
   setBudget: (body: { daily_limit_usd: number | null; monthly_limit_usd: number | null }) =>
     apiPost(`/cost/budget`, body),

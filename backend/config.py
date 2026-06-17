@@ -102,10 +102,14 @@ class Settings(BaseSettings):
     # manage schema with Alembic migrations instead.
     auto_migrate: bool = Field(default=True)
 
-    # ── AI Security Analyst (Claude-powered) ──────────────────────────────────
-    # Model used to generate plain-language threat summaries + session
-    # explanations. Uses the tenant's configured Anthropic key.
+    # ── AI Security Analyst + Saturn assistant (Claude-powered) ───────────────
+    # Model used to generate plain-language threat summaries, session
+    # explanations, and the Saturn support chatbot replies.
     analyst_model: str = Field(default="claude-sonnet-4-6")
+    # Platform-owner Anthropic key that funds owner-paid features (the AI
+    # summarizer + Saturn support bot). Falls back to ANTHROPIC_API_KEY. This is
+    # separate from per-tenant provider keys configured in the Gateway UI.
+    owner_anthropic_api_key: Optional[str] = None
 
     # ── Risk gate ─────────────────────────────────────────────────────────────
     risk_hold_threshold: float = Field(default=0.6, ge=0.0, le=1.0)

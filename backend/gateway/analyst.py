@@ -10,14 +10,9 @@ from __future__ import annotations
 
 import json
 
-from config import settings
-from llm import call_chat_usage
+from llm.owner import owner_chat
 
 _MAX_PROMPT_CHARS = 240
-
-
-def _model() -> str:
-    return settings.analyst_model or "claude-sonnet-4-6"
 
 
 def _compact(row: dict) -> dict:
@@ -66,8 +61,7 @@ async def summarize(tenant: str, rows: list[dict]) -> dict:
         "3. **Patterns** — any trends across agents/models.\n"
         "4. **Recommendations** — 2-3 concrete next actions."
     )
-    text, model, _ = await call_chat_usage(
-        tenant, _model(),
+    text, model = await owner_chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         max_tokens=700, temperature=0.2,
     )
@@ -81,8 +75,7 @@ async def explain(tenant: str, row: dict) -> dict:
         "and why, and whether it's concerning. Plain language, no markdown headers."
     )
     user = json.dumps(_compact(row) | {"response": (row.get("response") or "")[:240]})
-    text, model, _ = await call_chat_usage(
-        tenant, _model(),
+    text, model = await owner_chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         max_tokens=400, temperature=0.2,
     )
