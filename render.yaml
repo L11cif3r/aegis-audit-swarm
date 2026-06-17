@@ -12,7 +12,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter            # bump to standard+ for production traffic
+    plan: free            # bump to standard+ for production traffic
     healthCheckPath: /health
     autoDeploy: true
     envVars:
