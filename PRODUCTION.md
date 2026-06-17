@@ -15,13 +15,17 @@ The two halves deploy separately — **Vercel cannot host the FastAPI backend**
 
 **Backend → Render** (`render.yaml` blueprint at repo root):
 1. Render → New → **Blueprint** → select this repo. It provisions the
-   `aegis-gateway` Docker web service + a managed `aegis-redis` instance.
+   `aegis-gateway` Docker web service on the **free** plan (single instance, no
+   paid resources → no card required). The rate limiter and event bus fall back
+   to in-process when `REDIS_URL` is unset.
 2. Set the `sync: false` secrets in the dashboard: `DATABASE_URL` (Supabase DSN
    with `?sslmode=require`), `JWT_SECRET` (≥32 random chars), `ENCRYPTION_KEY`
    (Fernet key), `NOTARY_PRIVATE_KEY_PEM`, `CORS_ORIGINS` (your Vercel URL),
-   `APP_BASE_URL`. `REDIS_URL`, `ENVIRONMENT=production`, `HSTS=true`, and
+   `APP_BASE_URL`. `ENVIRONMENT=production`, `HSTS=true`, `UVICORN_WORKERS=1`, and
    `AUTO_MIGRATE=false` are wired automatically.
 3. The container runs `alembic upgrade head` on boot and binds `$PORT`.
+4. To scale horizontally later: add a Redis instance + `REDIS_URL`, raise the
+   plan, and bump `UVICORN_WORKERS`.
 
 **Frontend → Vercel** (`frontend/vercel.json`):
 1. Vercel → New Project → set **Root Directory = `frontend`**.

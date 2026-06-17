@@ -1,8 +1,13 @@
-# render.yaml — Aegis backend deployment blueprint (Render)
+# render.yaml — Aegis backend deployment blueprint (Render, free-tier)
 #
-# Deploys the FastAPI gateway as a Docker web service + a managed Redis instance
-# for the rate limiter / event bus. The frontend deploys separately to Vercel
-# (see frontend/vercel.json).
+# Deploys the FastAPI gateway as a single Docker web service on Render's FREE
+# plan. The rate limiter and event bus fall back to an in-process implementation
+# when REDIS_URL is unset, so no paid Redis instance is required for a single
+# instance. The frontend deploys separately to Vercel (frontend/vercel.json).
+#
+# NOTE: the free plan runs ONE instance and sleeps after ~15 min idle (first
+# request then takes ~30-60s to wake). To scale horizontally later, add a Redis
+# instance + REDIS_URL and bump the plan/worker count.
 #
 # Usage: push this repo, then in Render → "New" → "Blueprint" and point it here.
 # Fill the `sync: false` secrets in the Render dashboard after the first deploy.
@@ -12,14 +17,16 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: free            # bump to standard+ for production traffic
+    plan: free               # bump to standard+ (and add Redis) for production traffic
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: ENVIRONMENT
         value: production
+      # Free plan = single instance with limited memory → run one worker so the
+      # in-process rate limiter / event bus stay consistent.
       - key: UVICORN_WORKERS
-        value: "2"
+        value: "1"
       # TLS is terminated by Render → safe to enable HSTS.
       - key: HSTS
         value: "true"
@@ -27,12 +34,6 @@ services:
       # never the dev auto-migrator.
       - key: AUTO_MIGRATE
         value: "false"
-      # Redis (rate limiter + durable event bus), wired from the instance below.
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: aegis-redis
-          property: connectionString
       # ── Secrets: set these in the Render dashboard (never commit them) ───────
       - key: DATABASE_URL          # Supabase/Postgres DSN, ?sslmode=require
         sync: false
@@ -46,9 +47,3 @@ services:
         sync: false
       - key: APP_BASE_URL          # public dashboard URL (email links)
         sync: false
-
-  - type: redis
-    name: aegis-redis
-    plan: starter
-    maxmemoryPolicy: noeviction   # don't drop event-bus entries under pressure
-    ipAllowList: []               # internal-only (reachable from the web service)
