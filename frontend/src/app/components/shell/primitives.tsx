@@ -98,11 +98,17 @@ export function Badge({ children, tone = 'brand' }: { children: ReactNode; tone?
   );
 }
 
-export function SectionTitle({ children, hint }: { children: ReactNode; hint?: string }) {
+export function SectionTitle({ children, hint, info }: { children: ReactNode; hint?: string; info?: ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between">
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
       <h2 className="text-sm font-bold text-ink tracking-tight">{children}</h2>
-      {hint && <span className="text-[10px] text-soft">{hint}</span>}
+      {info}
+      {hint && (
+        <>
+          <span className="hidden sm:inline text-soft/30 select-none" aria-hidden>·</span>
+          <span className="text-[10px] text-soft font-medium tracking-wide">{hint}</span>
+        </>
+      )}
     </div>
   );
 }

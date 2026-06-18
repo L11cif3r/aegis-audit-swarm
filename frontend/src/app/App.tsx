@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Activity, ShieldAlert, Users, AudioLines, Wallet, BadgeCheck, FileLock2, Server, Plug,
+  Activity, ShieldAlert, AudioLines, Wallet, BadgeCheck, FileLock2, Server, Plug,
 } from 'lucide-react';
 
 import Background from './components/shell/Background';
@@ -13,6 +13,7 @@ import Landing from './components/landing/Landing';
 import AuthPage from './components/auth/AuthPage';
 import AccountActionPage from './components/auth/AccountActionPage';
 import { apiGet } from '../lib/api';
+import { TRUST_SCORE_INFO } from '../lib/trustInfo';
 import { useAuth } from '../lib/auth';
 
 // Detect a verify-email / reset-password deep link from the URL.
@@ -30,30 +31,28 @@ function readAccountAction():
 
 import Component01DashboardOverview from '../imports/01DashboardOverview';
 import Component02SecurityCenter from '../imports/02SecurityCenter';
-import Component03LeadPipeline from '../imports/03LeadPipeline';
 import Component04Sessions from '../imports/04Sessions';
 import Component05CostBilling from '../imports/05CostBilling';
 import Component06Compliance from '../imports/06Compliance';
 import Component07Evidence from '../imports/07Evidence';
 import Component08GatewayConfig from '../imports/08GatewayConfig';
 import Component09Integration from '../imports/09Integration';
+import ContactFooter from './components/shell/ContactFooter';
 
 const TABS: TabDef[] = [
   { id: 'dashboard', label: 'Overview', icon: Activity },
   { id: 'security', label: 'Security', icon: ShieldAlert },
   { id: 'gateway', label: 'Gateway', icon: Server },
   { id: 'integration', label: 'Integration', icon: Plug },
-  { id: 'leads', label: 'Leads', icon: Users },
   { id: 'sessions', label: 'Sessions', icon: AudioLines },
   { id: 'billing', label: 'Billing', icon: Wallet },
-  { id: 'compliance', label: 'Trust', icon: BadgeCheck },
+  { id: 'compliance', label: 'Trust', icon: BadgeCheck, info: TRUST_SCORE_INFO },
   { id: 'evidence', label: 'Evidence', icon: FileLock2 },
 ];
 
 const VIEWS: Record<string, React.ComponentType> = {
   dashboard: Component01DashboardOverview,
   security: Component02SecurityCenter,
-  leads: Component03LeadPipeline,
   sessions: Component04Sessions,
   billing: Component05CostBilling,
   compliance: Component06Compliance,
@@ -138,6 +137,11 @@ export default function App() {
 
   const View = VIEWS[currentView] ?? Component01DashboardOverview;
 
+  // Leads tab was removed — fall back if an old bookmark still points there.
+  useEffect(() => {
+    if (currentView === 'leads') setCurrentView('dashboard');
+  }, [currentView]);
+
   return (
     <div className="relative min-h-screen w-full text-ink font-['Inter',sans-serif] selection:bg-brand/30">
       <Background />
@@ -195,22 +199,16 @@ export default function App() {
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentView}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                  initial={{ opacity: 0, y: 18, filter: 'blur(6px)' }}
+                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                  exit={{ opacity: 0, y: -10, filter: 'blur(4px)' }}
+                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
                 >
                   <View />
                 </motion.div>
               </AnimatePresence>
 
-              <footer className="mt-20 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-hairline pt-6 text-[11px] text-soft">
-                <span>Aegis Audit Swarm — Talamanda AI Trust Layer</span>
-                <span className="flex items-center gap-1.5">
-                  <span className={`size-1.5 rounded-full ${live ? 'bg-ok' : 'bg-bad'}`} />
-                  {live ? 'Gateway connected' : 'Gateway offline'}
-                </span>
-              </footer>
+              <ContactFooter live={live} onNavigate={setCurrentView} />
             </main>
 
             <Saturn />

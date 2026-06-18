@@ -47,7 +47,7 @@ export default function Component04Sessions() {
 
   const explainSession = async (id?: string) => {
     if (!id) return;
-    setExplained((m) => ({ ...m, [id]: { loading: true } }));
+    setExplained((m) => ({ ...m, [id]: { loading: true, text: undefined, error: undefined } }));
     try {
       const res = await api.analystExplain(id);
       setExplained((m) => ({ ...m, [id]: { loading: false, text: res.explanation } }));

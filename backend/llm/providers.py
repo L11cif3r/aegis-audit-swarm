@@ -353,5 +353,4 @@ async def test_connection(tenant: str, provider: str, model: str | None = None) 
             "model": test_model,
             "latency_ms": latency_ms,
             "error": err,
-            "message": err,
         }

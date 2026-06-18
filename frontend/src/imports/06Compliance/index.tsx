@@ -3,9 +3,11 @@ import { BookOpen, Crosshair, Download } from 'lucide-react';
 import { RadialBarChart, RadialBar, ResponsiveContainer, PolarAngleAxis } from 'recharts';
 import { motion } from 'motion/react';
 import { api, API_BASE } from '../../lib/api';
+import { TRUST_SCORE_INFO, CONTROL_COVERAGE_INFO, ADVERSARY_COVERAGE_INFO } from '../../lib/trustInfo';
 import { PageHeader, Panel, SectionTitle, Badge, EmptyState, Bento } from '../../app/components/shell/primitives';
 import Reveal from '../../app/components/shell/Reveal';
 import Magnetic from '../../app/components/shell/Magnetic';
+import InfoTip from '../../app/components/shell/InfoTip';
 
 const FRAMEWORK_LABELS: Record<string, string> = {
   NIST_AI_RMF: 'NIST AI RMF',
@@ -76,7 +78,10 @@ export default function Component06Compliance() {
                 >
                   {score}
                 </motion.span>
-                <span className="text-[10px] uppercase tracking-[0.2em] text-soft mt-1">Trust Score</span>
+                <span className="text-[10px] uppercase tracking-[0.2em] text-soft mt-1 flex items-center gap-1.5">
+                  Trust Score
+                  <InfoTip text={TRUST_SCORE_INFO} />
+                </span>
               </div>
             </div>
             <Badge tone={bandTone(band)}>{band}</Badge>
@@ -109,7 +114,12 @@ export default function Component06Compliance() {
             <Panel>
               <div className="flex items-center gap-2">
                 <BookOpen size={15} className="text-brand" />
-                <SectionTitle hint={`${coverage?.total_controls ?? 0} controls`}>Control Library Coverage</SectionTitle>
+                <SectionTitle
+                  hint={`${coverage?.total_controls ?? 0} controls`}
+                  info={<InfoTip text={CONTROL_COVERAGE_INFO} />}
+                >
+                  Control Library Coverage
+                </SectionTitle>
               </div>
               <div className="grid sm:grid-cols-3 gap-2.5 mt-4">
                 {Object.keys(frameworks).length === 0 ? (
@@ -131,7 +141,12 @@ export default function Component06Compliance() {
             <Panel>
               <div className="flex items-center gap-2">
                 <Crosshair size={15} className="text-bad" />
-                <SectionTitle hint={`pass ${((advCoverage?.pass_rate ?? 1) * 100).toFixed(0)}%`}>Adversary Test Coverage</SectionTitle>
+                <SectionTitle
+                  hint={`pass ${((advCoverage?.pass_rate ?? 1) * 100).toFixed(0)}%`}
+                  info={<InfoTip text={ADVERSARY_COVERAGE_INFO} />}
+                >
+                  Adversary Test Coverage
+                </SectionTitle>
               </div>
               <div className="grid grid-cols-3 gap-2.5 mt-4">
                 {[

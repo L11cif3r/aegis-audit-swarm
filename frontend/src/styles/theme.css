@@ -329,6 +329,18 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Smoother interactive transitions across the app shell */
+@media (prefers-reduced-motion: no-preference) {
+  .card-surface,
+  .card-lift,
+  button,
+  a {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 0.22s;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
 body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;

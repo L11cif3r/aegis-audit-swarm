@@ -3,12 +3,16 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ShieldHalf, LogOut, User as UserIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
+import InfoTip from './InfoTip';
 import type { AuthUser } from '../../../lib/session';
+import { TRUST_SCORE_INFO } from '../../../lib/trustInfo';
 
 export interface TabDef {
   id: string;
   label: string;
   icon: LucideIcon;
+  /** Optional hover tooltip for complex tabs (shown as a small ⓘ). */
+  info?: string;
 }
 
 interface TopNavProps {
@@ -116,7 +120,8 @@ export default function TopNav({ tabs, current, onChange, live, user, onLogout }
               <button
                 key={tab.id}
                 onClick={() => onChange(tab.id)}
-                className="relative shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors"
+                data-cursor="hover"
+                className="relative shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-[color,transform] duration-300 ease-out active:scale-[0.97]"
               >
                 {active && (
                   <motion.span
@@ -125,9 +130,14 @@ export default function TopNav({ tabs, current, onChange, live, user, onLogout }
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                   />
                 )}
-                <span className={`relative z-10 flex items-center gap-1.5 ${active ? 'text-brandink' : 'text-soft hover:text-ink'}`}>
+                <span className={`relative z-10 flex items-center gap-1.5 transition-colors duration-300 ${active ? 'text-brandink' : 'text-soft hover:text-ink'}`}>
                   <Icon size={14} />
                   <span className="text-[12px] font-semibold tracking-tight hidden md:block">{tab.label}</span>
+                  {tab.info && (
+                    <span className="hidden md:inline-flex" onClick={(e) => e.stopPropagation()}>
+                      <InfoTip text={tab.info} />
+                    </span>
+                  )}
                 </span>
               </button>
             );

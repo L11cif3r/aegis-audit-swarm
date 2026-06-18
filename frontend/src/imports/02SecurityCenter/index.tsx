@@ -10,7 +10,7 @@ export default function Component02SecurityCenter() {
   const [brief, setBrief] = useState<{ loading: boolean; text?: string; model?: string | null; error?: string }>({ loading: false });
 
   const generateBrief = async () => {
-    setBrief({ loading: true });
+    setBrief({ loading: true, text: undefined, error: undefined });
     try {
       const res = await api.analystSummary(80);
       setBrief({ loading: false, text: res.summary, model: res.model });

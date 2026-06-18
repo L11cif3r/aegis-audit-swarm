@@ -662,15 +662,16 @@ export default function Component08GatewayConfig() {
                   : 'border-bad/30 bg-bad/5 text-bad'
               }`}
             >
-              <p className="font-semibold">{testResult.message || (testResult.ok ? 'Connected Successfully' : testResult.error)}</p>
+              <p className="font-semibold">
+                {testResult.ok
+                  ? (testResult.message || 'Connected Successfully')
+                  : (testResult.error || testResult.message || 'Test failed')}
+              </p>
               {testResult.ok && (
                 <p className="text-[11px] mt-1 opacity-90">
                   {testResult.latency_ms != null && `Latency: ${testResult.latency_ms} ms · `}
                   Model: {testResult.model}
                 </p>
-              )}
-              {!testResult.ok && testResult.error && (
-                <p className="text-[11px] mt-1 opacity-90">{testResult.error}</p>
               )}
             </div>
           )}
