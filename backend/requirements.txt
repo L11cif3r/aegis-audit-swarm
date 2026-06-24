@@ -17,7 +17,7 @@ openai==1.59.6
 google-genai==0.8.0
 
 # ── Crypto (Notary evidence signing) ─────────────────────────────────────────
-cryptography==44.0.0
+cryptography==49.0.0
 
 # ── Auth (password hashing + email validation) ───────────────────────────────
 bcrypt==5.0.0
