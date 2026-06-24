@@ -1,5 +1,5 @@
 # frontend/Dockerfile — Talamanda control plane (static build served by nginx)
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json* ./
