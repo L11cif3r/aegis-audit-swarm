@@ -30,7 +30,7 @@ alembic==1.14.0
 redis==5.2.1
 
 # ── Reporting (Safety Certificate / audit packages) ──────────────────────────
-reportlab==4.2.5
+reportlab==4.5.1
 
 # ── Observability ────────────────────────────────────────────────────────────
 opentelemetry-api==1.29.0
